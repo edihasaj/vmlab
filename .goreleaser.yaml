@@ -52,18 +52,12 @@ changelog:
       - '^chore:'
       - 'Merge pull request'
 
-# Homebrew tap publishing is configured but disabled until a HOMEBREW_TAP_TOKEN
-# repo secret is set and the vmlab repo is public. Re-enable by removing the
-# `disable:` line below.
-homebrew_casks:
-  - name: vmlab
-    disable: 'true'
-    repository:
-      owner: edihasaj
-      name: homebrew-tap
-      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
-    homepage: https://github.com/edihasaj/vmlab
-    description: One CLI for agents to install, set up, test, and verify software across any reachable target.
+# Homebrew tap publishing intentionally omitted until:
+#  1. vmlab repo goes public (so brew can read the tarballs), and
+#  2. a HOMEBREW_TAP_TOKEN secret is set in the vmlab repo (PAT with
+#     `contents:write` on edihasaj/homebrew-tap).
+# To re-enable: add a `brews:` (or `homebrew_casks:`) block pointing at
+# edihasaj/homebrew-tap and re-tag.
 
 release:
   github:
