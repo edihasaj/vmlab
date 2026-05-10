@@ -54,10 +54,12 @@ changelog:
 
 brews:
   - name: vmlab
+    # Skip when no tap token is provided (vmlab repo still private).
+    skip_upload: '{{ if eq (index .Env "HOMEBREW_TAP_TOKEN" | default "") "" }}true{{ else }}false{{ end }}'
     repository:
       owner: edihasaj
       name: homebrew-tap
-      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" | default "" }}'
     homepage: https://github.com/edihasaj/vmlab
     description: One CLI for agents to install, set up, test, and verify software across any reachable target.
     license: MIT

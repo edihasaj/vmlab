@@ -13,217 +13,175 @@ import (
 	"github.com/edihasaj/vmlab/internal/flow"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
+	mcpgo "github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-type toolHandler func(ctx context.Context, args json.RawMessage) (string, error)
-
-type tool struct {
-	name        string
-	description string
-	inputSchema map[string]any
-	handler     toolHandler
-}
-
-func defaultTools(allowWrite bool) []tool {
-	out := []tool{
-		{
-			name:        "vmlab_targets",
-			description: "List configured targets with their tags and transports.",
-			inputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-			handler: func(_ context.Context, _ json.RawMessage) (string, error) {
-				_, p, err := config.Load()
-				if err != nil {
-					return "", err
-				}
-				r, err := target.Load(p)
-				if err != nil {
-					return "", err
-				}
-				return mustJSON(r.All()), nil
-			},
-		},
-		{
-			name:        "vmlab_doctor",
-			description: "Check transport binaries and target reachability.",
-			inputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"selector": map[string]any{"type": "string", "description": "Optional selector (default: all)"},
-				},
-			},
-			handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
-				var p struct{ Selector string }
-				_ = json.Unmarshal(raw, &p)
-				if p.Selector == "" {
-					p.Selector = "all"
-				}
-				_, paths, err := config.Load()
-				if err != nil {
-					return "", err
-				}
-				r, err := target.Load(paths)
-				if err != nil {
-					return "", err
-				}
-				ts, err := target.NewSelector(p.Selector).Resolve(r)
-				if err != nil {
-					return "", err
-				}
-				reg := transport.Default()
-				rows := make([]map[string]any, 0, len(ts))
-				for _, t := range ts {
-					tr, err := reg.Get(t.Transport)
-					if err != nil {
-						rows = append(rows, map[string]any{"name": t.Name, "ok": false, "message": err.Error()})
-						continue
-					}
-					h := tr.Doctor(ctx, t)
-					rows = append(rows, map[string]any{"name": t.Name, "transport": t.Transport, "ok": h.OK, "message": h.Message})
-				}
-				return mustJSON(rows), nil
-			},
-		},
-		{
-			name:        "vmlab_evidence",
-			description: "List recent run summaries (read-only).",
-			inputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"limit": map[string]any{"type": "integer", "default": 20},
-				},
-			},
-			handler: func(_ context.Context, raw json.RawMessage) (string, error) {
-				var p struct{ Limit int }
-				_ = json.Unmarshal(raw, &p)
-				if p.Limit <= 0 {
-					p.Limit = 20
-				}
-				cfg, _, err := config.Load()
-				if err != nil {
-					return "", err
-				}
-				runs, err := evidence.List(cfg.RunsDir)
-				if err != nil {
-					return "", err
-				}
-				if len(runs) > p.Limit {
-					runs = runs[:p.Limit]
-				}
-				return mustJSON(runs), nil
-			},
-		},
-	}
+// registerTools wires every vmlab MCP tool into the server. Read-only tools
+// are always available; write tools require allowWrite.
+func registerTools(s *mcpserver.MCPServer, allowWrite bool) {
+	s.AddTool(
+		mcpgo.NewTool("vmlab_targets",
+			mcpgo.WithDescription("List configured targets with their tags and transports.")),
+		handleTargets,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_doctor",
+			mcpgo.WithDescription("Check transport binaries and target reachability."),
+			mcpgo.WithString("selector", mcpgo.Description("Target selector (default: all)"))),
+		handleDoctor,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_evidence",
+			mcpgo.WithDescription("List recent run summaries (read-only)."),
+			mcpgo.WithNumber("limit", mcpgo.Description("Max number of runs to return"))),
+		handleEvidence,
+	)
 
 	if !allowWrite {
-		return out
+		return
 	}
 
-	out = append(out,
-		tool{
-			name:        "vmlab_run",
-			description: "Run a shell command or YAML flow against a target selector.",
-			inputSchema: map[string]any{
-				"type":     "object",
-				"required": []string{"selector"},
-				"properties": map[string]any{
-					"selector":    map[string]any{"type": "string"},
-					"command":     map[string]any{"type": "string", "description": "Shell command (mutually exclusive with flowPath)"},
-					"flowPath":    map[string]any{"type": "string", "description": "Path to a flow YAML"},
-					"maxParallel": map[string]any{"type": "integer", "default": 0},
-					"failFast":    map[string]any{"type": "boolean", "default": false},
-				},
-			},
-			handler: runHandler,
-		},
-		tool{
-			name:        "vmlab_web",
-			description: "Run an abx-style web action against a web target.",
-			inputSchema: map[string]any{
-				"type":     "object",
-				"required": []string{"target", "args"},
-				"properties": map[string]any{
-					"target": map[string]any{"type": "string"},
-					"args":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				},
-			},
-			handler: webHandler,
-		},
-		tool{
-			name:        "vmlab_gui",
-			description: "Run a guiport-style desktop action against a gui target.",
-			inputSchema: map[string]any{
-				"type":     "object",
-				"required": []string{"target", "kind"},
-				"properties": map[string]any{
-					"target":   map[string]any{"type": "string"},
-					"kind":     map[string]any{"type": "string", "enum": []string{"click", "type", "screenshot", "run"}},
-					"selector": map[string]any{"type": "string"},
-					"text":     map[string]any{"type": "string"},
-					"path":     map[string]any{"type": "string"},
-				},
-			},
-			handler: guiHandler,
-		},
+	s.AddTool(
+		mcpgo.NewTool("vmlab_run",
+			mcpgo.WithDescription("Run a shell command or YAML flow against a target selector."),
+			mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("Target selector")),
+			mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
+			mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
+			mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent targets")),
+			mcpgo.WithBoolean("failFast", mcpgo.Description("Stop launching new work after first failure"))),
+		handleRun,
 	)
-	return out
+	s.AddTool(
+		mcpgo.NewTool("vmlab_web",
+			mcpgo.WithDescription("Run an abx-style web action against a web target."),
+			mcpgo.WithString("target", mcpgo.Required()),
+			mcpgo.WithArray("args", mcpgo.Required(),
+				mcpgo.Items(map[string]any{"type": "string"}))),
+		handleWeb,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_gui",
+			mcpgo.WithDescription("Run a guiport-style desktop action against a gui target."),
+			mcpgo.WithString("target", mcpgo.Required()),
+			mcpgo.WithString("kind", mcpgo.Required(),
+				mcpgo.Enum("click", "type", "screenshot", "run")),
+			mcpgo.WithString("selector"),
+			mcpgo.WithString("text"),
+			mcpgo.WithString("path")),
+		handleGUI,
+	)
 }
 
-func runHandler(ctx context.Context, raw json.RawMessage) (string, error) {
-	var p struct {
-		Selector    string `json:"selector"`
-		Command     string `json:"command"`
-		FlowPath    string `json:"flowPath"`
-		MaxParallel int    `json:"maxParallel"`
-		FailFast    bool   `json:"failFast"`
+// ---- handlers ---------------------------------------------------------------
+
+func handleTargets(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	_, p, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
 	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", err
+	r, err := target.Load(p)
+	if err != nil {
+		return helperError(err.Error()), nil
 	}
-	if p.Selector == "" {
-		return "", fmt.Errorf("selector is required")
-	}
-	if (p.Command == "") == (p.FlowPath == "") {
-		return "", fmt.Errorf("provide exactly one of command or flowPath")
-	}
+	return helperResult(mustJSON(r.All())), nil
+}
+
+func handleDoctor(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	sel := stringArg(req, "selector", "all")
 	_, paths, err := config.Load()
 	if err != nil {
-		return "", err
-	}
-	if err := config.EnsureDirs(paths); err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
 	r, err := target.Load(paths)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
-	ts, err := target.NewSelector(p.Selector).Resolve(r)
+	ts, err := target.NewSelector(sel).Resolve(r)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
+	}
+	reg := transport.Default()
+	rows := make([]map[string]any, 0, len(ts))
+	for _, t := range ts {
+		tr, err := reg.Get(t.Transport)
+		if err != nil {
+			rows = append(rows, map[string]any{"name": t.Name, "ok": false, "message": err.Error()})
+			continue
+		}
+		h := tr.Doctor(ctx, t)
+		rows = append(rows, map[string]any{"name": t.Name, "transport": t.Transport, "ok": h.OK, "message": h.Message})
+	}
+	return helperResult(mustJSON(rows)), nil
+}
+
+func handleEvidence(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	limit := intArg(req, "limit", 20)
+	cfg, _, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	runs, err := evidence.List(cfg.RunsDir)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	if len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return helperResult(mustJSON(runs)), nil
+}
+
+func handleRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	sel := stringArg(req, "selector", "")
+	cmdLine := stringArg(req, "command", "")
+	flowPath := stringArg(req, "flowPath", "")
+	maxParallel := intArg(req, "maxParallel", 0)
+	failFast := boolArg(req, "failFast", false)
+
+	if sel == "" {
+		return helperError("selector is required"), nil
+	}
+	if (cmdLine == "") == (flowPath == "") {
+		return helperError("provide exactly one of command or flowPath"), nil
+	}
+
+	_, paths, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	if err := config.EnsureDirs(paths); err != nil {
+		return helperError(err.Error()), nil
+	}
+	r, err := target.Load(paths)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	ts, err := target.NewSelector(sel).Resolve(r)
+	if err != nil {
+		return helperError(err.Error()), nil
 	}
 	reg := transport.Default()
 	var f *flow.Flow
-	if p.FlowPath != "" {
-		f, err = flow.Load(p.FlowPath)
+	if flowPath != "" {
+		f, err = flow.Load(flowPath)
 		if err != nil {
-			return "", err
+			return helperError(err.Error()), nil
 		}
 	}
 	run, err := evidence.New(paths.RunsDir)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
 	if f != nil {
 		run.SetFlow(f.SourceFile)
 	} else {
-		run.SetCmd(p.Command)
+		run.SetCmd(cmdLine)
 	}
-	run.SetSelector(p.Selector)
+	run.SetSelector(sel)
 
 	var stdout, stderr bytes.Buffer
-	outcomes, runErr := fleet.Run(ctx, ts, reg, fleet.Options{MaxParallel: p.MaxParallel, FailFast: p.FailFast},
+	outcomes, runErr := fleet.Run(ctx, ts, reg,
+		fleet.Options{MaxParallel: maxParallel, FailFast: failFast},
 		&stdout, &stderr,
 		func(ctx context.Context, t target.Target, tr transport.Transport, so, se io.Writer) (int, error) {
 			outW, errW, logs, err := run.TargetWriters(t.Name, &stdout, &stderr)
@@ -233,97 +191,156 @@ func runHandler(ctx context.Context, raw json.RawMessage) (string, error) {
 			defer logs.Close()
 			if f != nil {
 				steps, err := flow.Run(ctx, tr, t, f, outW, errW)
-				run.WriteSteps(t.Name, steps)
+				_, _ = run.WriteSteps(t.Name, steps)
 				if err != nil {
 					return lastFlowExit(steps, err), err
 				}
 				return 0, nil
 			}
-			res, err := tr.Run(ctx, t, []string{"sh", "-lc", p.Command}, outW, errW)
+			res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmdLine}, outW, errW)
 			return res.ExitCode, err
 		})
 	exit := fleet.AggregateExit(outcomes)
 	for _, o := range outcomes {
-		s := evidence.TargetSummary{Name: o.Target.Name, Transport: o.Target.Transport, ExitCode: o.ExitCode, Duration: o.Duration.Milliseconds()}
+		ts := evidence.TargetSummary{Name: o.Target.Name, Transport: o.Target.Transport, ExitCode: o.ExitCode, Duration: o.Duration.Milliseconds()}
 		if o.Error != nil {
-			s.Error = o.Error.Error()
+			ts.Error = o.Error.Error()
 		}
-		run.AddTarget(s)
+		run.AddTarget(ts)
 	}
 	meta, _ := run.Finish(exit)
-	return mustJSON(map[string]any{
+	_, _ = run.WriteJUnit()
+	return helperResult(mustJSON(map[string]any{
 		"runId":  meta.ID,
 		"exit":   exit,
 		"meta":   meta,
 		"err":    errOrNil(runErr),
 		"stdout": stdout.String(),
 		"stderr": stderr.String(),
-	}), nil
+	})), nil
 }
 
-func webHandler(ctx context.Context, raw json.RawMessage) (string, error) {
-	var p struct {
-		Target string   `json:"target"`
-		Args   []string `json:"args"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", err
+func handleWeb(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	name := stringArg(req, "target", "")
+	args := stringArrayArg(req, "args")
+	if name == "" {
+		return helperError("target is required"), nil
 	}
 	_, paths, err := config.Load()
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
 	r, err := target.Load(paths)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
-	t, ok := r.Get(p.Target)
+	t, ok := r.Get(name)
 	if !ok {
-		return "", fmt.Errorf("unknown target: %s", p.Target)
+		return helperError(fmt.Sprintf("unknown target: %s", name)), nil
 	}
 	tr, err := transport.Default().Get(t.Transport)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
 	var stdout, stderr bytes.Buffer
-	res, err := tr.Run(ctx, t, p.Args, &stdout, &stderr)
+	res, err := tr.Run(ctx, t, args, &stdout, &stderr)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
-	return mustJSON(map[string]any{"exit": res.ExitCode, "stdout": stdout.String(), "stderr": stderr.String()}), nil
+	return helperResult(mustJSON(map[string]any{"exit": res.ExitCode, "stdout": stdout.String(), "stderr": stderr.String()})), nil
 }
 
-func guiHandler(ctx context.Context, raw json.RawMessage) (string, error) {
-	var p struct {
-		Target   string `json:"target"`
-		Kind     string `json:"kind"`
-		Selector string `json:"selector"`
-		Text     string `json:"text"`
-		Path     string `json:"path"`
-	}
-	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", err
+func handleGUI(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	name := stringArg(req, "target", "")
+	kind := stringArg(req, "kind", "")
+	if name == "" || kind == "" {
+		return helperError("target and kind are required"), nil
 	}
 	_, paths, err := config.Load()
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
 	r, err := target.Load(paths)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
-	t, ok := r.Get(p.Target)
+	t, ok := r.Get(name)
 	if !ok {
-		return "", fmt.Errorf("unknown target: %s", p.Target)
+		return helperError(fmt.Sprintf("unknown target: %s", name)), nil
 	}
 	tr, err := transport.Default().Get(t.Transport)
 	if err != nil {
-		return "", err
+		return helperError(err.Error()), nil
 	}
-	if err := tr.GUI(ctx, t, transport.GUIAction{Kind: p.Kind, Selector: p.Selector, Text: p.Text, Path: p.Path}); err != nil {
-		return "", err
+	action := transport.GUIAction{
+		Kind:     kind,
+		Selector: stringArg(req, "selector", ""),
+		Text:     stringArg(req, "text", ""),
+		Path:     stringArg(req, "path", ""),
 	}
-	return mustJSON(map[string]any{"ok": true}), nil
+	if err := tr.GUI(ctx, t, action); err != nil {
+		return helperError(err.Error()), nil
+	}
+	return helperResult(mustJSON(map[string]any{"ok": true})), nil
+}
+
+// ---- helpers ---------------------------------------------------------------
+
+func stringArg(req mcpgo.CallToolRequest, name, def string) string {
+	args := req.GetArguments()
+	if v, ok := args[name]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return def
+}
+
+func intArg(req mcpgo.CallToolRequest, name string, def int) int {
+	args := req.GetArguments()
+	v, ok := args[name]
+	if !ok {
+		return def
+	}
+	switch x := v.(type) {
+	case float64:
+		return int(x)
+	case int:
+		return x
+	case json.Number:
+		n, _ := x.Int64()
+		return int(n)
+	}
+	return def
+}
+
+func boolArg(req mcpgo.CallToolRequest, name string, def bool) bool {
+	args := req.GetArguments()
+	if v, ok := args[name]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return def
+}
+
+func stringArrayArg(req mcpgo.CallToolRequest, name string) []string {
+	args := req.GetArguments()
+	v, ok := args[name]
+	if !ok {
+		return nil
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, x := range arr {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func mustJSON(v any) string {

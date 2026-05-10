@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (post-initial)
+
+- JSON-schema validation for target and flow YAML (santhosh-tekuri/jsonschema),
+  with line/path errors on bad files.
+- `--dry-run` on `vmlab run` — prints the resolved plan (targets + steps).
+- `--verbose` / `-v` root flag — enables DEBUG `log/slog` output.
+- `junit.xml` written into every evidence bundle; per-step failure
+  attribution when running flows.
+- Adapter tests with PATH-injected fake binaries for crabbox, adb, idb,
+  simctl, maestro, abx, guiport.
+- MCP server now uses `github.com/mark3labs/mcp-go` (proper initialise
+  handshake, typed tool descriptors, sampling-ready).
+
 ### Added
 
 - Cobra-based CLI: `init`, `target`, `doctor`, `run`, `shell`, `web`, `gui`,

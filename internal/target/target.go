@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/edihasaj/vmlab/internal/config"
+	"github.com/edihasaj/vmlab/internal/schema"
 	"gopkg.in/yaml.v3"
 )
 
@@ -91,7 +92,8 @@ func Load(p config.Paths) (*Registry, error) {
 	for _, f := range files {
 		t, err := readFile(f)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
+			// readFile already prefixes the path; don't double it.
+			return nil, err
 		}
 		if t.Name == "" {
 			t.Name = strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
@@ -112,11 +114,14 @@ func Load(p config.Paths) (*Registry, error) {
 func readFile(path string) (Target, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return Target{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := schema.ValidateTarget(path, data); err != nil {
 		return Target{}, err
 	}
 	var t Target
 	if err := yaml.Unmarshal(data, &t); err != nil {
-		return Target{}, err
+		return Target{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return t, nil
 }

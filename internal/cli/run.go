@@ -24,6 +24,7 @@ func newRunCmd() *cobra.Command {
 		continueOnError bool
 		asJSON          bool
 		noEvidence      bool
+		dryRun          bool
 	)
 	c := &cobra.Command{
 		Use:   "run <selector> <flow-or-cmd>...",
@@ -70,6 +71,10 @@ Examples:
 				}
 			} else {
 				cmdLine = strings.Join(rest, " ")
+			}
+
+			if dryRun {
+				return printPlan(cmd.OutOrStdout(), selectorArg, ts, loadedFlow, cmdLine, asJSON)
 			}
 
 			reg := transport.Default()
@@ -137,6 +142,9 @@ Examples:
 					run.AddTarget(sum)
 				}
 				meta, _ := run.Finish(exit)
+				if _, err := run.WriteJUnit(); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "junit: %v\n", err)
+				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s)\n", meta.ID, run.Dir)
 			}
 
@@ -175,7 +183,64 @@ Examples:
 	c.Flags().BoolVar(&continueOnError, "continue-on-error", false, "ignore failures and run every target")
 	c.Flags().BoolVar(&asJSON, "json", false, "emit JSON summary at the end")
 	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan (targets + steps) without executing")
 	return c
+}
+
+func printPlan(w io.Writer, selectorArg string, ts []target.Target, f *flow.Flow, cmdLine string, asJSON bool) error {
+	type planTarget struct {
+		Name      string   `json:"name"`
+		Transport string   `json:"transport"`
+		Tags      []string `json:"tags,omitempty"`
+	}
+	type planStep struct {
+		Index int    `json:"index"`
+		Kind  string `json:"kind"`
+		Cmd   string `json:"cmd"`
+	}
+	plan := struct {
+		Selector string       `json:"selector"`
+		Flow     string       `json:"flow,omitempty"`
+		Command  string       `json:"command,omitempty"`
+		Targets  []planTarget `json:"targets"`
+		Steps    []planStep   `json:"steps,omitempty"`
+	}{Selector: selectorArg}
+	for _, t := range ts {
+		plan.Targets = append(plan.Targets, planTarget{Name: t.Name, Transport: t.Transport, Tags: t.Tags})
+	}
+	if f != nil {
+		plan.Flow = f.SourceFile
+		for i, s := range f.Steps {
+			kind, cmd := "run", s.Run
+			if s.Assert != "" {
+				kind, cmd = "assert", s.Assert
+			}
+			plan.Steps = append(plan.Steps, planStep{Index: i, Kind: kind, Cmd: cmd})
+		}
+	} else {
+		plan.Command = cmdLine
+	}
+	if asJSON {
+		return json.NewEncoder(w).Encode(plan)
+	}
+	fmt.Fprintf(w, "dry-run plan (selector=%q)\n", plan.Selector)
+	if plan.Flow != "" {
+		fmt.Fprintf(w, "flow:    %s\n", plan.Flow)
+	}
+	if plan.Command != "" {
+		fmt.Fprintf(w, "command: %s\n", plan.Command)
+	}
+	fmt.Fprintf(w, "targets (%d):\n", len(plan.Targets))
+	for _, t := range plan.Targets {
+		fmt.Fprintf(w, "  - %-20s %-10s [%s]\n", t.Name, t.Transport, strings.Join(t.Tags, ","))
+	}
+	if len(plan.Steps) > 0 {
+		fmt.Fprintf(w, "steps (%d):\n", len(plan.Steps))
+		for _, s := range plan.Steps {
+			fmt.Fprintf(w, "  %d. %-6s %s\n", s.Index, s.Kind, s.Cmd)
+		}
+	}
+	return nil
 }
 
 func stripDashDash(args []string) []string {

@@ -221,6 +221,29 @@ func Bundle(runDir, outZip string) error {
 	})
 }
 
+// Step is the on-disk shape of one flow step (mirrors flow.StepResult).
+type Step struct {
+	Index      int    `json:"index"`
+	Kind       string `json:"kind"`
+	Cmd        string `json:"cmd"`
+	Name       string `json:"name,omitempty"`
+	ExitCode   int    `json:"exitCode"`
+	DurationMs int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
+}
+
+func readSteps(path string) ([]Step, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []Step
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PruneOlderThan removes runs older than the cutoff.
 func PruneOlderThan(root string, cutoff time.Time) (int, error) {
 	entries, err := os.ReadDir(root)

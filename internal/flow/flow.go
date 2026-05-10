@@ -8,10 +8,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/edihasaj/vmlab/internal/schema"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"gopkg.in/yaml.v3"
@@ -38,6 +40,9 @@ func Load(path string) (*Flow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read flow %s: %w", path, err)
+	}
+	if err := schema.ValidateFlow(path, data); err != nil {
+		return nil, err
 	}
 	var f Flow
 	if err := yaml.Unmarshal(data, &f); err != nil {
@@ -66,13 +71,13 @@ func LooksLikeFlowPath(s string) bool {
 
 // StepResult captures one step's outcome.
 type StepResult struct {
-	Index    int           `json:"index"`
-	Kind     string        `json:"kind"`
-	Cmd      string        `json:"cmd"`
-	Name     string        `json:"name,omitempty"`
-	ExitCode int           `json:"exitCode"`
-	Duration time.Duration `json:"durationMs"`
-	Error    string        `json:"error,omitempty"`
+	Index      int    `json:"index"`
+	Kind       string `json:"kind"`
+	Cmd        string `json:"cmd"`
+	Name       string `json:"name,omitempty"`
+	ExitCode   int    `json:"exitCode"`
+	DurationMs int64  `json:"durationMs"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Run executes a flow against a target via tr, streaming output to stdout/stderr.
@@ -90,10 +95,11 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			return results, fmt.Errorf("step %d: must set run or assert", i)
 		}
 		start := time.Now()
+		slog.Debug("flow step", "target", t.Name, "index", i, "kind", kind, "cmd", oneLine(cmd))
 		fmt.Fprintf(stderr, "step %d (%s): %s\n", i, kind, oneLine(cmd))
 		res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmd}, stdout, stderr)
 		dur := time.Since(start)
-		sr := StepResult{Index: i, Kind: kind, Cmd: cmd, Name: s.Name, ExitCode: res.ExitCode, Duration: dur}
+		sr := StepResult{Index: i, Kind: kind, Cmd: cmd, Name: s.Name, ExitCode: res.ExitCode, DurationMs: dur.Milliseconds()}
 		if err != nil {
 			sr.Error = err.Error()
 			results = append(results, sr)

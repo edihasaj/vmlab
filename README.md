@@ -65,7 +65,16 @@ vmlab evidence show <run-id>
 | `vmlab serve --mcp` | Speak Model Context Protocol over stdio for agent integration. |
 
 Every read-style command supports `--json`. Run-style commands return non-zero
-on any target failure and write a single evidence bundle.
+on any target failure and write a single evidence bundle (including a
+`junit.xml` summary for CI consumption).
+
+Extra `run` flags:
+- `--dry-run` prints the resolved plan (targets + steps) without executing.
+- `--no-evidence` skips writing the bundle.
+- `--max-parallel N`, `--fail-fast`, `--continue-on-error` control fan-out.
+
+Global:
+- `-v` / `--verbose` enables DEBUG slog output for transport + flow steps.
 
 ## Selectors
 

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vmlab target",
+  "type": "object",
+  "required": ["transport"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "transport": {
+      "type": "string",
+      "enum": ["local", "crabbox", "abx", "guiport", "adb", "idb", "simctl", "maestro"]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "shell": { "type": "boolean" },
+        "sync": { "type": "boolean" },
+        "install": { "type": "boolean" },
+        "screenshot": { "type": "boolean" },
+        "gui": { "type": "boolean" },
+        "web": { "type": "boolean" },
+        "mobile": { "type": "boolean" }
+      }
+    }
+  },
+  "additionalProperties": true
+}
