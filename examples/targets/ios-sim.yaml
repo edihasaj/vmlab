@@ -1,0 +1,9 @@
+name: ios-sim
+transport: simctl
+tags: [ios, simulator, mobile]
+simctl:
+  udid: "BOOTED"
+capabilities:
+  install: true
+  screenshot: true
+  mobile: true

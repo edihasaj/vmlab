@@ -1,0 +1,5 @@
+name: install
+steps:
+  - run: ./scripts/setup.sh
+  - run: ./scripts/install.sh
+  - assert: ./scripts/verify.sh

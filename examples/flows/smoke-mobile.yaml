@@ -1,0 +1,4 @@
+name: smoke-mobile
+steps:
+  - run: maestro test flows/login.yaml
+  - run: maestro test flows/checkout.yaml

@@ -1,0 +1,130 @@
+// Package flow loads and runs vmlab YAML flows.
+//
+// A flow is intentionally minimal — `run` and `assert` shell steps. Anything
+// more complex belongs in a script the flow invokes.
+package flow
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/edihasaj/vmlab/internal/target"
+	"github.com/edihasaj/vmlab/internal/transport"
+	"gopkg.in/yaml.v3"
+)
+
+// Step is one shell action.
+type Step struct {
+	Run    string `yaml:"run,omitempty"`
+	Assert string `yaml:"assert,omitempty"`
+	Name   string `yaml:"name,omitempty"`
+}
+
+// Flow is a sequence of steps.
+type Flow struct {
+	Name  string `yaml:"name,omitempty"`
+	Steps []Step `yaml:"steps"`
+
+	// SourceFile records where the flow was loaded from.
+	SourceFile string `yaml:"-"`
+}
+
+// Load parses a flow file.
+func Load(path string) (*Flow, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read flow %s: %w", path, err)
+	}
+	var f Flow
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("parse flow %s: %w", path, err)
+	}
+	if len(f.Steps) == 0 {
+		return nil, fmt.Errorf("flow %s has no steps", path)
+	}
+	if f.Name == "" {
+		f.Name = strings.TrimSuffix(stripDir(path), extOf(path))
+	}
+	f.SourceFile = path
+	return &f, nil
+}
+
+// LooksLikeFlowPath reports whether arg is a YAML file path (heuristic).
+func LooksLikeFlowPath(s string) bool {
+	if !strings.HasSuffix(s, ".yaml") && !strings.HasSuffix(s, ".yml") {
+		return false
+	}
+	if _, err := os.Stat(s); err == nil {
+		return true
+	}
+	return false
+}
+
+// StepResult captures one step's outcome.
+type StepResult struct {
+	Index    int           `json:"index"`
+	Kind     string        `json:"kind"`
+	Cmd      string        `json:"cmd"`
+	Name     string        `json:"name,omitempty"`
+	ExitCode int           `json:"exitCode"`
+	Duration time.Duration `json:"durationMs"`
+	Error    string        `json:"error,omitempty"`
+}
+
+// Run executes a flow against a target via tr, streaming output to stdout/stderr.
+// failFast: if true (default for asserts), stop after the first failure.
+func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, stdout, stderr io.Writer) ([]StepResult, error) {
+	results := make([]StepResult, 0, len(f.Steps))
+	for i, s := range f.Steps {
+		var kind, cmd string
+		switch {
+		case s.Run != "":
+			kind, cmd = "run", s.Run
+		case s.Assert != "":
+			kind, cmd = "assert", s.Assert
+		default:
+			return results, fmt.Errorf("step %d: must set run or assert", i)
+		}
+		start := time.Now()
+		fmt.Fprintf(stderr, "step %d (%s): %s\n", i, kind, oneLine(cmd))
+		res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmd}, stdout, stderr)
+		dur := time.Since(start)
+		sr := StepResult{Index: i, Kind: kind, Cmd: cmd, Name: s.Name, ExitCode: res.ExitCode, Duration: dur}
+		if err != nil {
+			sr.Error = err.Error()
+			results = append(results, sr)
+			return results, err
+		}
+		results = append(results, sr)
+		if res.ExitCode != 0 {
+			return results, fmt.Errorf("step %d (%s) exited %d", i, kind, res.ExitCode)
+		}
+	}
+	return results, nil
+}
+
+func oneLine(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 120 {
+		return s[:117] + "..."
+	}
+	return s
+}
+
+func stripDir(p string) string {
+	if i := strings.LastIndexAny(p, "/\\"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+func extOf(p string) string {
+	if i := strings.LastIndex(p, "."); i > 0 {
+		return p[i:]
+	}
+	return ""
+}

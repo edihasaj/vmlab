@@ -1,0 +1,9 @@
+name: ubuntu-local
+transport: crabbox
+tags: [linux, local, vm]
+crabbox:
+  configPath: ~/.crabbox/ubuntu-local.yaml
+capabilities:
+  shell: true
+  sync: true
+  install: true

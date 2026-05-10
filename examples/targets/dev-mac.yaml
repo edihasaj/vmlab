@@ -1,0 +1,5 @@
+name: dev-mac
+transport: local
+tags: [local, mac]
+capabilities:
+  shell: true

@@ -1,0 +1,5 @@
+name: smoke-web
+steps:
+  - run: abx goto $URL
+  - assert: abx text 'h1' | grep -qi welcome
+  - run: abx screenshot /tmp/smoke.png

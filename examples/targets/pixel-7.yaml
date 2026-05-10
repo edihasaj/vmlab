@@ -1,0 +1,9 @@
+name: pixel-7
+transport: adb
+tags: [android, mobile, physical]
+adb:
+  serial: "RFNX0123456"
+capabilities:
+  install: true
+  screenshot: true
+  mobile: true

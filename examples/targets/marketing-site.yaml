@@ -1,0 +1,8 @@
+name: marketing-site
+transport: abx
+tags: [web]
+abx:
+  url: https://edihasaj.com
+capabilities:
+  web: true
+  screenshot: true
