@@ -17,15 +17,32 @@ import (
 
 // RunMeta is the top-level summary written to meta.json.
 type RunMeta struct {
-	ID         string          `json:"id"`
-	StartedAt  time.Time       `json:"startedAt"`
-	FinishedAt time.Time       `json:"finishedAt,omitempty"`
-	DurationMs int64           `json:"durationMs"`
-	Targets    []TargetSummary `json:"targets"`
-	Cmd        string          `json:"cmd,omitempty"`
-	Flow       string          `json:"flow,omitempty"`
-	Selector   string          `json:"selector,omitempty"`
-	ExitCode   int             `json:"exitCode"`
+	ID         string            `json:"id"`
+	StartedAt  time.Time         `json:"startedAt"`
+	FinishedAt time.Time         `json:"finishedAt,omitempty"`
+	DurationMs int64             `json:"durationMs"`
+	Targets    []TargetSummary   `json:"targets"`
+	Cmd        string            `json:"cmd,omitempty"`
+	Flow       string            `json:"flow,omitempty"`
+	Selector   string            `json:"selector,omitempty"`
+	ExitCode   int               `json:"exitCode"`
+	Lifecycle  *LifecycleSummary `json:"lifecycle,omitempty"`
+}
+
+// LifecycleSummary records provider-side bookkeeping for runs that brought an
+// instance up and then disposed of it. Foundation for cost reporting: the
+// (UpMs + RunMs + DownMs) window approximates the billable uptime window.
+type LifecycleSummary struct {
+	Instance   string `json:"instance"`
+	Provider   string `json:"provider"`
+	PriorState string `json:"priorState,omitempty"`
+	Changed    bool   `json:"changed"`
+	Reason     string `json:"reason,omitempty"`
+	Dispose    string `json:"dispose,omitempty"`
+	UpMs       int64  `json:"upMs,omitempty"`
+	RunMs      int64  `json:"runMs,omitempty"`
+	DownMs     int64  `json:"downMs,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // TargetSummary is one target's slice of a run.
@@ -68,6 +85,15 @@ func New(root string) (*Run, error) {
 func (r *Run) SetCmd(cmd string)    { r.meta.Cmd = cmd }
 func (r *Run) SetFlow(path string)  { r.meta.Flow = path }
 func (r *Run) SetSelector(s string) { r.meta.Selector = s }
+
+// SetLifecycle attaches provider-lifecycle bookkeeping. Idempotent.
+func (r *Run) SetLifecycle(l LifecycleSummary) { r.meta.Lifecycle = &l }
+
+// WriteFile writes name (no path separators allowed) under the run dir.
+// Used for plain-text snapshots like status-before.txt.
+func (r *Run) WriteFile(name string, data []byte) error {
+	return os.WriteFile(filepath.Join(r.Dir, sanitize(name)), data, 0o644)
+}
 
 // TargetWriters returns paired io.Writers for stdout+stderr that tee to the
 // caller-supplied passthrough writers and to per-target log files. The returned

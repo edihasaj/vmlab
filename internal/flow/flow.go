@@ -19,11 +19,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Step is one shell action.
+// Step is one shell action. Exactly one of Run, Assert, or Exec must be set.
+//
+//   - run    — shell line, wrapped via `sh -lc` (POSIX).
+//   - assert — same wrapping but failures stop the flow with a clear message.
+//   - exec   — argv passed directly to the transport, no shell wrapping.
+//     Use this for Windows guests (e.g. `["cmd.exe", "/c", "ver"]`) or
+//     anywhere `sh` is not available.
 type Step struct {
-	Run    string `yaml:"run,omitempty"`
-	Assert string `yaml:"assert,omitempty"`
-	Name   string `yaml:"name,omitempty"`
+	Run    string   `yaml:"run,omitempty"`
+	Assert string   `yaml:"assert,omitempty"`
+	Exec   []string `yaml:"exec,omitempty"`
+	Name   string   `yaml:"name,omitempty"`
 }
 
 // Flow is a sequence of steps.
@@ -86,18 +93,24 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 	results := make([]StepResult, 0, len(f.Steps))
 	for i, s := range f.Steps {
 		var kind, cmd string
+		var argv []string
 		switch {
+		case len(s.Exec) > 0:
+			kind, argv = "exec", s.Exec
+			cmd = strings.Join(argv, " ")
 		case s.Run != "":
 			kind, cmd = "run", s.Run
+			argv = []string{"sh", "-lc", cmd}
 		case s.Assert != "":
 			kind, cmd = "assert", s.Assert
+			argv = []string{"sh", "-lc", cmd}
 		default:
-			return results, fmt.Errorf("step %d: must set run or assert", i)
+			return results, fmt.Errorf("step %d: must set run, assert, or exec", i)
 		}
 		start := time.Now()
 		slog.Debug("flow step", "target", t.Name, "index", i, "kind", kind, "cmd", oneLine(cmd))
 		fmt.Fprintf(stderr, "step %d (%s): %s\n", i, kind, oneLine(cmd))
-		res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmd}, stdout, stderr)
+		res, err := tr.Run(ctx, t, argv, stdout, stderr)
 		dur := time.Since(start)
 		sr := StepResult{Index: i, Kind: kind, Cmd: cmd, Name: s.Name, ExitCode: res.ExitCode, DurationMs: dur.Milliseconds()}
 		if err != nil {

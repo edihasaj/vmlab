@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs: `docs/providers.md`, `docs/runbooks/parallels.md`,
   `docs/runbooks/hetzner.md`, transport pages for `parallels-guest`
   and `ssh`.
+- Evidence: `vmlab with` and `vmlab run @<instance>` now write a run
+  directory with a `lifecycle` block in `meta.json` (instance, provider,
+  priorState, changed, up/run/down milliseconds), plus
+  `status-before.txt` / `status-after.txt` snapshots.
+- `vmlab run @<instance>` short-circuit: when the selector is a single
+  `@name` matching an instance, lifecycle-wrap the run (Up → flow/cmd →
+  Down per disposition). Falls back to the existing `@tag` behaviour
+  for non-instance names.
+- Flow `exec:` step — argv list passed directly to the transport, no
+  `sh -lc` wrapping. Unblocks Windows / non-POSIX guests
+  (`exec: ["cmd.exe", "/c", "ver"]`).
 
 ### Added (post-initial)
 

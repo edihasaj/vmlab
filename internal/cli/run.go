@@ -50,6 +50,14 @@ Examples:
 			rest := args[1:]
 			rest = stripDashDash(rest)
 
+			// @instance shortcut — when the selector resolves to a single
+			// provider instance, lifecycle-wrap the run. Existing target
+			// selectors (`@tag`, `<name>`, `all`) keep their meaning when no
+			// instance matches; instance wins on exact `@<name>` collision.
+			if name, ok := instanceShortcut(selectorArg, p); ok {
+				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence)
+			}
+
 			r, err := target.Load(p)
 			if err != nil {
 				return err

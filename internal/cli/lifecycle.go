@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/config"
+	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
@@ -91,8 +93,9 @@ func newDownCmd() *cobra.Command {
 
 func newWithCmd() *cobra.Command {
 	var (
-		dispose string
-		timeout time.Duration
+		dispose    string
+		timeout    time.Duration
+		noEvidence bool
 	)
 	c := &cobra.Command{
 		Use:   "with <instance> -- <cmd>...",
@@ -102,21 +105,45 @@ target transport, then restores prior power state. If we resumed/started the
 VM we suspend/dispose it on exit; if it was already running we leave it.`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			inst := args[0]
+			instArg := args[0]
 			rest := stripDashDash(args[1:])
 			if len(rest) == 0 {
 				return fmt.Errorf("with: missing command after --")
 			}
-			pr, instance, err := resolveInstance(inst)
+			pr, instance, err := resolveInstance(instArg)
 			if err != nil {
 				return err
 			}
+			cfg, paths, err := config.Load()
+			if err != nil {
+				return err
+			}
+			_ = cfg
+			var run *evidence.Run
+			if !noEvidence {
+				if err := config.EnsureDirs(paths); err != nil {
+					return err
+				}
+				run, err = evidence.New(paths.RunsDir)
+				if err != nil {
+					return err
+				}
+				run.SetCmd(joinArgs(rest))
+				run.SetSelector("@" + instance.Name)
+			}
+
+			// up
+			upStart := time.Now()
 			tgt, res, upErr := pr.Up(cmd.Context(), instance)
+			upMs := time.Since(upStart).Milliseconds()
+			if run != nil {
+				_ = run.WriteFile("status-before.txt", []byte(res.PriorState.String()+"\n"))
+			}
 			if upErr != nil {
+				finishLifecycle(run, instance, res, "", upMs, 0, 0, upErr)
 				return upErr
 			}
-			// disposition resolution: --dispose wins; else fall through to
-			// instance.disposition; default keep when user-was-already-running.
+
 			restoreOnSuccess, err := resolveDispose(dispose, instance.Disp.OnSuccess, provider.DisposeSuspend)
 			if err != nil {
 				return err
@@ -126,31 +153,50 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				return err
 			}
 			only := instance.Disp.OnlyIfWeStarted || dispose == ""
-			cleanup := func(runErr error) {
-				if only && !res.Changed {
-					fmt.Fprintf(cmd.ErrOrStderr(), "with: leaving %s as-is (was already running)\n", instance.Name)
-					return
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				defer cancel()
-				want := restoreOnSuccess
-				if runErr != nil {
-					want = restoreOnFailure
-				}
-				if err := pr.Down(ctx, instance, want); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "with: cleanup (%s) failed: %v\n", want, err)
-				}
-			}
+
+			// run
 			reg := transport.Default()
 			tr, err := reg.Get(tgt.Transport)
 			if err != nil {
-				cleanup(err)
+				cleanupAndFinish(cmd, run, pr, instance, res, only, restoreOnFailure, upMs, 0, err)
 				return err
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 			defer cancel()
-			result, runErr := tr.Run(ctx, tgt, rest, cmd.OutOrStdout(), cmd.ErrOrStderr())
-			cleanup(runErr)
+			var teeOut, teeErr io.Writer = cmd.OutOrStdout(), cmd.ErrOrStderr()
+			var logs *evidence.TargetLogs
+			if run != nil {
+				o, e, l, lerr := run.TargetWriters(instance.Name, cmd.OutOrStdout(), cmd.ErrOrStderr())
+				if lerr != nil {
+					return lerr
+				}
+				teeOut, teeErr, logs = o, e, l
+				defer logs.Close()
+			}
+			runStart := time.Now()
+			result, runErr := tr.Run(ctx, tgt, rest, teeOut, teeErr)
+			runMs := time.Since(runStart).Milliseconds()
+
+			// cleanup + finalise
+			downMs, downErr := cleanupAndFinish(cmd, run, pr, instance, res, only, pickDispose(runErr, result.ExitCode, restoreOnSuccess, restoreOnFailure), upMs, runMs, runErr)
+			_ = downErr // already logged inside helper
+
+			if run != nil {
+				exit := result.ExitCode
+				if runErr != nil && exit == 0 {
+					exit = 1
+				}
+				run.AddTarget(evidence.TargetSummary{
+					Name:      instance.Name,
+					Transport: tgt.Transport,
+					ExitCode:  exit,
+					Duration:  runMs,
+					Error:     errString(runErr),
+				})
+				meta, _ := run.Finish(exit)
+				fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s) up=%dms run=%dms down=%dms\n",
+					meta.ID, run.Dir, upMs, runMs, downMs)
+			}
 			if runErr != nil {
 				return runErr
 			}
@@ -162,7 +208,76 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 	}
 	c.Flags().StringVar(&dispose, "dispose", "", "keep|suspend|poweroff|destroy (defaults to instance disposition)")
 	c.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "max time for the inner command")
+	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
 	return c
+}
+
+// pickDispose returns the disposition to apply after the inner command, based
+// on success/failure.
+func pickDispose(runErr error, exit int, onSuccess, onFailure provider.Dispose) provider.Dispose {
+	if runErr != nil || exit != 0 {
+		return onFailure
+	}
+	return onSuccess
+}
+
+// cleanupAndFinish runs Down (respecting only_if_we_started) and writes the
+// post-state snapshot + lifecycle summary into the evidence run. Returns the
+// down-phase duration and any cleanup error (also logged to stderr).
+func cleanupAndFinish(cmd *cobra.Command, run *evidence.Run, pr provider.Provider, inst provider.Instance, res provider.EnsureResult, only bool, want provider.Dispose, upMs, runMs int64, runErr error) (int64, error) {
+	if only && !res.Changed {
+		fmt.Fprintf(cmd.ErrOrStderr(), "with: leaving %s as-is (was already running)\n", inst.Name)
+		want = provider.DisposeKeep
+	}
+	downStart := time.Now()
+	var downErr error
+	if want != provider.DisposeKeep {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		downErr = pr.Down(ctx, inst, want)
+		cancel()
+		if downErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "with: cleanup (%s) failed: %v\n", want, downErr)
+		}
+	}
+	downMs := time.Since(downStart).Milliseconds()
+	if run != nil {
+		postCtx, postCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if st, sErr := pr.Status(postCtx, inst); sErr == nil {
+			_ = run.WriteFile("status-after.txt", []byte(st.String()+"\n"))
+		}
+		postCancel()
+	}
+	finishLifecycle(run, inst, res, want.String(), upMs, runMs, downMs, runErr)
+	return downMs, downErr
+}
+
+func finishLifecycle(run *evidence.Run, inst provider.Instance, res provider.EnsureResult, disposeStr string, upMs, runMs, downMs int64, runErr error) {
+	if run == nil {
+		return
+	}
+	run.SetLifecycle(evidence.LifecycleSummary{
+		Instance:   inst.Name,
+		Provider:   inst.Provider,
+		PriorState: res.PriorState.String(),
+		Changed:    res.Changed,
+		Reason:     res.Reason,
+		Dispose:    disposeStr,
+		UpMs:       upMs,
+		RunMs:      runMs,
+		DownMs:     downMs,
+		Error:      errString(runErr),
+	})
+}
+
+func joinArgs(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	out := args[0]
+	for _, a := range args[1:] {
+		out += " " + a
+	}
+	return out
 }
 
 // resolveInstance loads config + the named instance, returning the matching

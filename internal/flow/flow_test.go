@@ -50,3 +50,36 @@ steps:
 	}
 	_ = io.EOF
 }
+
+func TestExecStepPassesArgvDirect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.yaml")
+	body := `name: smoke
+steps:
+  - name: argv
+    exec: ["sh", "-c", "echo argv-mode"]
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Steps) != 1 || len(f.Steps[0].Exec) != 3 {
+		t.Fatalf("exec parse: %+v", f.Steps)
+	}
+
+	tr := transport.NewLocal()
+	var out, errb bytes.Buffer
+	steps, err := Run(context.Background(), tr, target.Target{Name: "local", Transport: "local"}, f, &out, &errb)
+	if err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
+	}
+	if len(steps) != 1 || steps[0].ExitCode != 0 || steps[0].Kind != "exec" {
+		t.Fatalf("expected one successful exec step, got %+v", steps)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("argv-mode")) {
+		t.Fatalf("expected argv-mode in stdout, got %q", out.String())
+	}
+}

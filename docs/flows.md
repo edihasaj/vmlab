@@ -11,7 +11,19 @@ name: install        # optional; defaults to filename stem
 steps:
   - run: <shell>     # arbitrary shell, runs through `sh -lc`
   - assert: <shell>  # same; semantically marks a verification step
-  - name: <label>    # optional, attached to the next run/assert
+  - exec: [argv...]  # argv list, passed directly — no shell wrapping
+  - name: <label>    # optional, attached to any step type
+```
+
+Use `exec:` when the target doesn't speak POSIX shell (Windows guests via
+`parallels-guest`, anywhere `sh` isn't on PATH). Example:
+
+```yaml
+steps:
+  - name: ver
+    exec: ["cmd.exe", "/c", "ver"]
+  - name: date
+    exec: ["powershell.exe", "-NoProfile", "-Command", "Get-Date -Format 'o'"]
 ```
 
 ## Example
