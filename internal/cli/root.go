@@ -28,6 +28,8 @@ func NewRoot() *cobra.Command {
 		newInitCmd(),
 		newVersionCmd(),
 		newTargetCmd(),
+		newProviderCmd(),
+		newInstanceCmd(),
 		newDoctorCmd(),
 		newRunCmd(),
 		newShellCmd(),

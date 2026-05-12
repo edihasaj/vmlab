@@ -24,9 +24,13 @@ var targetSchemaBytes []byte
 //go:embed flow.schema.json
 var flowSchemaBytes []byte
 
+//go:embed instance.schema.json
+var instanceSchemaBytes []byte
+
 var (
-	targetSchema = mustCompile("target", targetSchemaBytes)
-	flowSchema   = mustCompile("flow", flowSchemaBytes)
+	targetSchema   = mustCompile("target", targetSchemaBytes)
+	flowSchema     = mustCompile("flow", flowSchemaBytes)
+	instanceSchema = mustCompile("instance", instanceSchemaBytes)
 )
 
 func mustCompile(name string, data []byte) *jsonschema.Schema {
@@ -54,6 +58,11 @@ func ValidateTarget(path string, data []byte) error {
 // ValidateFlow parses YAML bytes and validates against the flow schema.
 func ValidateFlow(path string, data []byte) error {
 	return validate(path, data, flowSchema)
+}
+
+// ValidateInstance parses YAML bytes and validates against the instance schema.
+func ValidateInstance(path string, data []byte) error {
+	return validate(path, data, instanceSchema)
 }
 
 func validate(path string, data []byte, sch *jsonschema.Schema) error {

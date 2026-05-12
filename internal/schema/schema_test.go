@@ -67,3 +67,51 @@ func TestBadStep(t *testing.T) {
 		t.Fatal("expected error: step needs run or assert")
 	}
 }
+
+func TestValidInstance(t *testing.T) {
+	body := []byte(`
+name: win11-studio
+provider: parallels
+parallels:
+  host: edis-mac-studio
+  vm: "Windows 11"
+ready:
+  kind: parallels-tools
+  timeout: 120s
+target:
+  transport: parallels-guest
+disposition:
+  on_success: suspend
+  on_failure: suspend
+  only_if_we_started: true
+`)
+	if err := ValidateInstance("win11.yaml", body); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestInstanceUnknownProvider(t *testing.T) {
+	body := []byte(`name: x
+provider: nope
+`)
+	if err := ValidateInstance("x.yaml", body); err == nil {
+		t.Fatal("expected error for unknown provider")
+	}
+}
+
+func TestInstanceMissingProvider(t *testing.T) {
+	if err := ValidateInstance("x.yaml", []byte(`name: x`)); err == nil {
+		t.Fatal("expected error: provider required")
+	}
+}
+
+func TestInstanceBadDisposition(t *testing.T) {
+	body := []byte(`name: x
+provider: parallels
+disposition:
+  on_success: vapourise
+`)
+	if err := ValidateInstance("x.yaml", body); err == nil {
+		t.Fatal("expected error: unknown disposition")
+	}
+}

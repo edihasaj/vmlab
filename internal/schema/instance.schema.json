@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vmlab instance",
+  "type": "object",
+  "required": ["provider"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "provider": {
+      "type": "string",
+      "enum": ["parallels", "hetzner"]
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "ready": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "pattern": "^(parallels-tools|ssh|tcp:[0-9]+|http)$"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(ns|us|µs|ms|s|m|h)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "transport": {
+          "type": "string",
+          "enum": ["local", "crabbox", "abx", "guiport", "adb", "idb", "simctl", "maestro", "parallels-guest", "ssh"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "disposition": {
+      "type": "object",
+      "properties": {
+        "on_success": { "type": "string", "enum": ["keep", "suspend", "poweroff", "destroy"] },
+        "on_failure": { "type": "string", "enum": ["keep", "suspend", "poweroff", "destroy"] },
+        "only_if_we_started": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

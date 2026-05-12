@@ -36,8 +36,9 @@ type Paths struct {
 	UserFile  string // ~/.vmlab/config.yaml
 	RepoDir   string // <cwd>/.vmlab
 	RepoFile  string // <cwd>/.vmlab.yaml or <cwd>/.vmlab/config.yaml
-	RunsDir   string
-	TargetDir []string // ordered: user first, repo overrides
+	RunsDir     string
+	TargetDir   []string // ordered: user first, repo overrides
+	InstanceDir []string // ordered: user first, repo overrides
 }
 
 // ResolvePaths returns the canonical paths used by vmlab.
@@ -61,6 +62,10 @@ func ResolvePaths() (Paths, error) {
 		TargetDir: []string{
 			filepath.Join(userDir, "targets"),
 			filepath.Join(repoDir, "targets"),
+		},
+		InstanceDir: []string{
+			filepath.Join(userDir, "instances"),
+			filepath.Join(repoDir, "instances"),
 		},
 	}
 	return p, nil
@@ -112,7 +117,12 @@ func mergeFile(into *Config, path string) error {
 
 // EnsureDirs creates user-level dirs if missing.
 func EnsureDirs(p Paths) error {
-	for _, d := range []string{p.UserDir, filepath.Join(p.UserDir, "targets"), p.RunsDir} {
+	for _, d := range []string{
+		p.UserDir,
+		filepath.Join(p.UserDir, "targets"),
+		filepath.Join(p.UserDir, "instances"),
+		p.RunsDir,
+	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}
@@ -122,8 +132,17 @@ func EnsureDirs(p Paths) error {
 
 // TargetFiles returns all .yaml/.yml files under TargetDir, repo-level last.
 func (p Paths) TargetFiles() ([]string, error) {
+	return collectYAML(p.TargetDir)
+}
+
+// InstanceFiles returns all .yaml/.yml files under InstanceDir, repo-level last.
+func (p Paths) InstanceFiles() ([]string, error) {
+	return collectYAML(p.InstanceDir)
+}
+
+func collectYAML(dirs []string) ([]string, error) {
 	var out []string
-	for _, dir := range p.TargetDir {
+	for _, dir := range dirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
