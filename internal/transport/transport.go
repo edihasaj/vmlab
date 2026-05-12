@@ -111,5 +111,6 @@ func Default() *Registry {
 	r.Register(NewMaestro())
 	r.Register(NewLocal())
 	r.Register(NewParallelsGuest())
+	r.Register(NewSSH())
 	return r
 }
