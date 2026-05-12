@@ -8,7 +8,9 @@ adb, idb, or Maestro — it composes them so a single command works whether the
 target is a Hetzner Linux VM, a Parallels Windows guest, a Pixel phone, an iOS
 simulator, a Mac mini, or a ChromeOS box.
 
-See [`goal.md`](goal.md) for the why and [`plan.md`](plan.md) for the how.
+See [`goal.md`](goal.md) for the why, [`plan.md`](plan.md) for the original
+plan, and [`docs/providers.md`](docs/providers.md) for the lifecycle layer
+that drives Parallels and Hetzner instances.
 
 ## Install
 
@@ -62,6 +64,12 @@ vmlab evidence show <run-id>
 | `vmlab gui <target> --kind click --selector ...` | Drive a desktop target via guiport. |
 | `vmlab screenshot <target> <out-path>` | Capture a screenshot from any transport that supports it. |
 | `vmlab evidence ls/show/bundle/prune` | Inspect or zip per-run evidence directories. |
+| `vmlab provider ls/doctor` | List/health-check registered VM providers. |
+| `vmlab instance add/ls/show/rm/status` | Manage provider instances under `~/.vmlab/instances/`. |
+| `vmlab up <instance>` | Ensure an instance is running and ready (idempotent). |
+| `vmlab down <instance> [--dispose=…]` | Dispose of an instance — `keep\|suspend\|poweroff\|destroy`. |
+| `vmlab with <instance> -- <cmd>` | Up → run → restore prior state. Honours `disposition.only_if_we_started`. |
+| `vmlab orphans [--destroy]` | List (and optionally clean) cloud resources tagged `vmlab=*`. |
 | `vmlab serve --mcp` | Speak Model Context Protocol over stdio for agent integration. |
 
 Every read-style command supports `--json`. Run-style commands return non-zero

@@ -37,9 +37,10 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "user dir:    %s\n", p.UserDir)
-			fmt.Fprintf(out, "targets dir: %s\n", p.TargetDir[0])
-			fmt.Fprintf(out, "runs dir:    %s\n", p.RunsDir)
+			fmt.Fprintf(out, "user dir:      %s\n", p.UserDir)
+			fmt.Fprintf(out, "targets dir:   %s\n", p.TargetDir[0])
+			fmt.Fprintf(out, "instances dir: %s\n", p.InstanceDir[0])
+			fmt.Fprintf(out, "runs dir:      %s\n", p.RunsDir)
 
 			repoCfg := filepath.Join(p.RepoDir, "..", ".vmlab.yaml")
 			repoCfg = filepath.Clean(repoCfg)

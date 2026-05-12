@@ -12,10 +12,10 @@ Instance (YAML)  ──▶  Provider.Up()  ──▶  Target  ──▶  Transpo
 
 ## Built-in providers
 
-| Provider | Backend | Default transport | Default `dispose.on_success` |
-|---|---|---|---|
-| `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` |
-| `hetzner` | `hcloud` CLI | `ssh` | `destroy` |
+| Provider | Backend | Default transport | Default `dispose.on_success` | Status |
+|---|---|---|---|---|
+| `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` | live-smoked |
+| `hetzner` | `hcloud` CLI | `ssh` | `destroy` | **MVP — code + stub tests; live-token validation pending** |
 
 ## Instance config
 

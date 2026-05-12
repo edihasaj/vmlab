@@ -1,5 +1,10 @@
 # Runbook: Hetzner provider
 
+> **Status: MVP.** Code path, schema, and stub tests are in place; needs
+> live-token validation before first real use. Treat this as the canonical
+> shape for cloud providers and verify against a throwaway project before
+> pointing at anything billable.
+
 End-to-end: provision a Hetzner Cloud server from scratch, run a command on
 it, destroy it. Zero residual spend.
 

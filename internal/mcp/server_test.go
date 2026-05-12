@@ -4,7 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -126,12 +130,12 @@ func TestToolsListReadOnly(t *testing.T) {
 	for _, n := range names {
 		got[n] = true
 	}
-	for _, want := range []string{"vmlab_targets", "vmlab_doctor", "vmlab_evidence"} {
+	for _, want := range []string{"vmlab_targets", "vmlab_doctor", "vmlab_evidence", "vmlab_instances"} {
 		if !got[want] {
 			t.Errorf("missing tool %q (have: %v)", want, names)
 		}
 	}
-	for _, no := range []string{"vmlab_run", "vmlab_web", "vmlab_gui"} {
+	for _, no := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with"} {
 		if got[no] {
 			t.Errorf("write-mode tool %q unexpectedly exposed without --allow-write", no)
 		}
@@ -147,10 +151,152 @@ func TestToolsListAllowWrite(t *testing.T) {
 	for _, n := range names {
 		got[n] = true
 	}
-	for _, want := range []string{"vmlab_run", "vmlab_web", "vmlab_gui"} {
+	for _, want := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with"} {
 		if !got[want] {
 			t.Errorf("missing tool %q (have: %v)", want, names)
 		}
+	}
+}
+
+// setupParallelsHome wires a fake $HOME with a single parallels instance and
+// a stubbed `prlctl` on PATH. The stub body decides the response.
+func setupParallelsHome(t *testing.T, stubBody string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell required")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	instDir := filepath.Join(home, ".vmlab", "instances")
+	if err := os.MkdirAll(instDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`name: smoke
+provider: parallels
+parallels:
+  vm: smoke
+ready:
+  kind: parallels-tools
+  timeout: 2s
+disposition:
+  on_success: suspend
+  only_if_we_started: true
+`)
+	if err := os.WriteFile(filepath.Join(instDir, "smoke.yaml"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stubDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(stubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+%s
+`, filepath.Join(stubDir, "prlctl.args"), stubBody)
+	if err := os.WriteFile(filepath.Join(stubDir, "prlctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func toolText(t *testing.T, resp map[string]any) string {
+	t.Helper()
+	r, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("no result: %#v", resp)
+	}
+	content, _ := r["content"].([]any)
+	if len(content) == 0 {
+		t.Fatalf("empty content: %#v", r)
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	return text
+}
+
+func TestMCPInstancesListsConfigured(t *testing.T) {
+	setupParallelsHome(t, `exit 0`)
+	c := startServer(t, false)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_instances",
+		"arguments": map[string]any{},
+	}, 10)
+	text := toolText(t, resp)
+	if !strings.Contains(text, "smoke") || !strings.Contains(text, "parallels") {
+		t.Errorf("expected smoke/parallels in instances output, got: %s", text)
+	}
+}
+
+func TestMCPUpIdempotent(t *testing.T) {
+	setupParallelsHome(t, `case "$1" in
+status) echo 'VM "smoke" exist running'; exit 0 ;;
+exec) exit 0 ;;
+esac`)
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_up",
+		"arguments": map[string]any{"instance": "smoke"},
+	}, 11)
+	text := toolText(t, resp)
+	if !strings.Contains(text, `"changed": false`) {
+		t.Errorf("expected changed=false when already running, got: %s", text)
+	}
+}
+
+func TestMCPUpStartsSuspended(t *testing.T) {
+	setupParallelsHome(t, `STATE="$HOME/bin/started"
+case "$1" in
+status)
+  if [ -f "$STATE" ]; then echo 'VM "smoke" exist running'; else echo 'VM "smoke" exist suspended'; fi
+  exit 0 ;;
+start) touch "$STATE"; exit 0 ;;
+exec) exit 0 ;;
+esac`)
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_up",
+		"arguments": map[string]any{"instance": "smoke"},
+	}, 12)
+	text := toolText(t, resp)
+	if !strings.Contains(text, `"changed": true`) {
+		t.Errorf("expected changed=true when starting from suspended, got: %s", text)
+	}
+}
+
+func TestMCPDownRejectsUnknown(t *testing.T) {
+	setupParallelsHome(t, `exit 0`)
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_down",
+		"arguments": map[string]any{"instance": "nope"},
+	}, 13)
+	r, _ := resp["result"].(map[string]any)
+	if r == nil {
+		t.Fatalf("no result: %#v", resp)
+	}
+	if isErr, _ := r["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true for unknown instance, got: %#v", r)
+	}
+}
+
+func TestMCPWithRequiresCommand(t *testing.T) {
+	setupParallelsHome(t, `exit 0`)
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_with",
+		"arguments": map[string]any{"instance": "smoke"},
+	}, 14)
+	r, _ := resp["result"].(map[string]any)
+	if r == nil {
+		t.Fatalf("no result: %#v", resp)
+	}
+	if isErr, _ := r["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true when command is missing, got: %#v", r)
 	}
 }
 
