@@ -227,6 +227,87 @@ func TestGuiportClick(t *testing.T) {
 	}
 }
 
+func TestParallelsGuestLocal(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "prlctl", 0)
+	withPath(t, dir)
+
+	tr := NewParallelsGuest()
+	tgt := target.Target{
+		Name:      "win11",
+		Transport: "parallels-guest",
+		Settings: map[string]any{
+			"parallels": map[string]any{"vm": "Windows 11"},
+		},
+	}
+	_, err := tr.Run(context.Background(), tgt, []string{"cmd.exe", "/c", "ver"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readLastArgs(t, args)
+	for _, want := range []string{"exec", "Windows 11", "cmd.exe", "/c", "ver"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in argv: %s", want, got)
+		}
+	}
+}
+
+func TestParallelsGuestRemoteQuoting(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewParallelsGuest()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"parallels": map[string]any{
+				"host": "studio.local",
+				"user": "edi",
+				"vm":   "Windows 11",
+			},
+		},
+	}
+	// arg with spaces and a single quote — the layered-quote case.
+	probe := []string{"powershell.exe", "-NoProfile", "-Command", "Get-Date -Format 'o'"}
+	_, err := tr.Run(context.Background(), tgt, probe, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readLastArgs(t, args)
+	for _, want := range []string{
+		"-o ConnectTimeout=8",
+		"-o BatchMode=yes",
+		"edi@studio.local",
+		"prlctl exec",
+		`'Windows 11'`,
+		"powershell.exe",
+		"-NoProfile",
+		"-Command",
+		`'Get-Date -Format '\''o'\'''`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in argv: %s", want, got)
+		}
+	}
+}
+
+func TestParallelsGuestPosixQuote(t *testing.T) {
+	cases := map[string]string{
+		"plain":         "plain",
+		"":              "''",
+		"has space":     `'has space'`,
+		`with'quote`:    `'with'\''quote'`,
+		`a"b`:           `'a"b'`,
+		`semi;colon`:    `'semi;colon'`,
+		`back\slash`:    `'back\slash'`,
+	}
+	for in, want := range cases {
+		if got := posixQuote(in); got != want {
+			t.Errorf("posixQuote(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestRunExitCode(t *testing.T) {
 	dir := t.TempDir()
 	stubBinary(t, dir, "crabbox", 7)

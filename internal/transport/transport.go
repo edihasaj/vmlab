@@ -110,5 +110,6 @@ func Default() *Registry {
 	r.Register(NewSimctl())
 	r.Register(NewMaestro())
 	r.Register(NewLocal())
+	r.Register(NewParallelsGuest())
 	return r
 }

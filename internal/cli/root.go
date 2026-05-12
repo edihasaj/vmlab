@@ -3,6 +3,7 @@ package cli
 
 import (
 	"github.com/edihasaj/vmlab/internal/logging"
+	_ "github.com/edihasaj/vmlab/internal/provider/all"
 	"github.com/edihasaj/vmlab/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +33,9 @@ func NewRoot() *cobra.Command {
 		newInstanceCmd(),
 		newDoctorCmd(),
 		newRunCmd(),
+		newUpCmd(),
+		newDownCmd(),
+		newWithCmd(),
 		newShellCmd(),
 		newWebCmd(),
 		newGUICmd(),

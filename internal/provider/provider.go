@@ -161,8 +161,23 @@ func (r *Registry) All() []Provider {
 }
 
 // Default returns a registry pre-populated with built-in providers.
-// Real providers are wired in later phases; for now it's empty so the CLI
-// surface compiles and `vmlab provider ls` reports zero providers.
+// Concrete providers are registered from internal/provider/<name>/init.go via
+// SideEffectRegister so this package stays free of provider-specific imports.
 func Default() *Registry {
-	return NewRegistry()
+	r := NewRegistry()
+	for _, p := range builtin {
+		r.Register(p)
+	}
+	return r
+}
+
+// builtin is the side-loaded list of providers. Concrete provider packages
+// append to it via init().
+var builtin []Provider
+
+// SideEffectRegister adds a provider to the built-in set. Called from
+// concrete provider package init() so Default() picks it up without an
+// import cycle.
+func SideEffectRegister(p Provider) {
+	builtin = append(builtin, p)
 }
