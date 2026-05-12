@@ -47,6 +47,13 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	if err != nil {
 		return err
 	}
+	if !dryRun {
+		lock, err := acquireInstanceLockAt(cmd, paths, inst.Name)
+		if err != nil {
+			return err
+		}
+		defer lock.Release()
+	}
 
 	var loadedFlow *flow.Flow
 	var cmdArgs []string

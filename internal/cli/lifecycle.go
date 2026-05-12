@@ -11,6 +11,7 @@ import (
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/provider"
+	"github.com/edihasaj/vmlab/internal/state"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,11 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			lock, err := acquireInstanceLock(cmd, inst.Name)
+			if err != nil {
+				return err
+			}
+			defer lock.Release()
 			tgt, res, err := pr.Up(cmd.Context(), inst)
 			out := cmd.OutOrStdout()
 			if asJSON {
@@ -66,6 +72,11 @@ func newDownCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			lock, err := acquireInstanceLock(cmd, inst.Name)
+			if err != nil {
+				return err
+			}
+			defer lock.Release()
 			d, err := resolveDispose(dispose, inst.Disp.OnSuccess, provider.DisposeSuspend)
 			if err != nil {
 				return err
@@ -119,6 +130,11 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				return err
 			}
 			_ = cfg
+			lock, err := acquireInstanceLockAt(cmd, paths, instance.Name)
+			if err != nil {
+				return err
+			}
+			defer lock.Release()
 			var run *evidence.Run
 			if !noEvidence {
 				if err := config.EnsureDirs(paths); err != nil {
@@ -266,6 +282,27 @@ func finishLifecycle(run *evidence.Run, inst provider.Instance, res provider.Ens
 		RunMs:      runMs,
 		DownMs:     downMs,
 		Error:      errString(runErr),
+	})
+}
+
+// acquireInstanceLock takes a lock on the named instance, loading paths from
+// config. Prints a one-line wait notice on contention.
+func acquireInstanceLock(cmd *cobra.Command, name string) (*state.Lock, error) {
+	_, paths, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	return acquireInstanceLockAt(cmd, paths, name)
+}
+
+// acquireInstanceLockAt is the same but skips a second config.Load when the
+// caller already has Paths in hand.
+func acquireInstanceLockAt(cmd *cobra.Command, paths config.Paths, name string) (*state.Lock, error) {
+	if err := config.EnsureDirs(paths); err != nil {
+		return nil, err
+	}
+	return state.Acquire(paths.StateDir, name, func(pid string) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "waiting for instance lock on %q (held by pid %s)…\n", name, pid)
 	})
 }
 

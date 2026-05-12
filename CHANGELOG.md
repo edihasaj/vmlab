@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Flow `exec:` step — argv list passed directly to the transport, no
   `sh -lc` wrapping. Unblocks Windows / non-POSIX guests
   (`exec: ["cmd.exe", "/c", "ver"]`).
+- Instance file lock (`internal/state`) serialises `vmlab up/down/with`
+  and `vmlab run @<instance>` so two terminals can't race lifecycle
+  on the same VM. Contention prints a one-line wait notice naming
+  the holder PID, then blocks until the lock is released.
+- Top-level Makefile with `build`, `install`, `test`, `vet`, `cover`,
+  `smoke-parallels`, `clean` targets.
 
 ### Added (post-initial)
 

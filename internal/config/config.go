@@ -37,6 +37,7 @@ type Paths struct {
 	RepoDir   string // <cwd>/.vmlab
 	RepoFile  string // <cwd>/.vmlab.yaml or <cwd>/.vmlab/config.yaml
 	RunsDir     string
+	StateDir    string   // ~/.vmlab/state — file locks, ephemeral bookkeeping
 	TargetDir   []string // ordered: user first, repo overrides
 	InstanceDir []string // ordered: user first, repo overrides
 }
@@ -59,6 +60,7 @@ func ResolvePaths() (Paths, error) {
 		RepoDir:  repoDir,
 		RepoFile: filepath.Join(cwd, ".vmlab.yaml"),
 		RunsDir:  filepath.Join(userDir, "runs"),
+		StateDir: filepath.Join(userDir, "state"),
 		TargetDir: []string{
 			filepath.Join(userDir, "targets"),
 			filepath.Join(repoDir, "targets"),
@@ -122,6 +124,7 @@ func EnsureDirs(p Paths) error {
 		filepath.Join(p.UserDir, "targets"),
 		filepath.Join(p.UserDir, "instances"),
 		p.RunsDir,
+		p.StateDir,
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
