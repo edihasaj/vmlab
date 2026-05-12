@@ -11,6 +11,8 @@ import (
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/fleet"
 	"github.com/edihasaj/vmlab/internal/flow"
+	"github.com/edihasaj/vmlab/internal/provider"
+	_ "github.com/edihasaj/vmlab/internal/provider/all"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -37,10 +39,38 @@ func registerTools(s *mcpserver.MCPServer, allowWrite bool) {
 			mcpgo.WithNumber("limit", mcpgo.Description("Max number of runs to return"))),
 		handleEvidence,
 	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_instances",
+			mcpgo.WithDescription("List configured provider instances (read-only).")),
+		handleInstances,
+	)
 
 	if !allowWrite {
 		return
 	}
+
+	s.AddTool(
+		mcpgo.NewTool("vmlab_up",
+			mcpgo.WithDescription("Bring a provider instance to running (idempotent)."),
+			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name"))),
+		handleUp,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_down",
+			mcpgo.WithDescription("Dispose of a provider instance (idempotent)."),
+			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
+			mcpgo.WithString("dispose", mcpgo.Description("keep|suspend|poweroff|destroy"))),
+		handleDown,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_with",
+			mcpgo.WithDescription("Bring an instance up, run a command, restore prior state."),
+			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
+			mcpgo.WithArray("command", mcpgo.Required(),
+				mcpgo.Items(map[string]any{"type": "string"})),
+			mcpgo.WithString("dispose", mcpgo.Description("Override disposition on success"))),
+		handleWith,
+	)
 
 	s.AddTool(
 		mcpgo.NewTool("vmlab_run",
@@ -248,6 +278,140 @@ func handleWeb(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 		return helperError(err.Error()), nil
 	}
 	return helperResult(mustJSON(map[string]any{"exit": res.ExitCode, "stdout": stdout.String(), "stderr": stderr.String()})), nil
+}
+
+func handleInstances(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	_, p, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	r, err := provider.LoadInstances(p)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	return helperResult(mustJSON(r.All())), nil
+}
+
+func handleUp(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	name := stringArg(req, "instance", "")
+	pr, inst, err := resolveInstanceForMCP(name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	tgt, res, err := pr.Up(ctx, inst)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	return helperResult(mustJSON(map[string]any{
+		"instance":   inst.Name,
+		"target":     tgt.Name,
+		"transport":  tgt.Transport,
+		"changed":    res.Changed,
+		"priorState": res.PriorState.String(),
+		"reason":     res.Reason,
+	})), nil
+}
+
+func handleDown(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	name := stringArg(req, "instance", "")
+	disposeRaw := stringArg(req, "dispose", "")
+	pr, inst, err := resolveInstanceForMCP(name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	d, err := resolveDisposeMCP(disposeRaw, inst.Disp.OnSuccess, provider.DisposeSuspend)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	if err := pr.Down(ctx, inst, d); err != nil {
+		return helperError(err.Error()), nil
+	}
+	return helperResult(mustJSON(map[string]any{"instance": inst.Name, "dispose": d.String()})), nil
+}
+
+func handleWith(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	name := stringArg(req, "instance", "")
+	command := stringArrayArg(req, "command")
+	disposeRaw := stringArg(req, "dispose", "")
+	if len(command) == 0 {
+		return helperError("command is required"), nil
+	}
+	pr, inst, err := resolveInstanceForMCP(name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	tgt, res, err := pr.Up(ctx, inst)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	onSuccess, err := resolveDisposeMCP(disposeRaw, inst.Disp.OnSuccess, provider.DisposeSuspend)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	onFailure, err := resolveDisposeMCP(disposeRaw, inst.Disp.OnFailure, onSuccess)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	tr, err := transport.Default().Get(tgt.Transport)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	var stdout, stderr bytes.Buffer
+	runRes, runErr := tr.Run(ctx, tgt, command, &stdout, &stderr)
+	// cleanup honours disposition.only_if_we_started
+	if !inst.Disp.OnlyIfWeStarted || res.Changed {
+		want := onSuccess
+		if runErr != nil || runRes.ExitCode != 0 {
+			want = onFailure
+		}
+		if cErr := pr.Down(ctx, inst, want); cErr != nil {
+			stderr.WriteString("cleanup: " + cErr.Error() + "\n")
+		}
+	}
+	out := map[string]any{
+		"instance": inst.Name,
+		"exit":     runRes.ExitCode,
+		"stdout":   stdout.String(),
+		"stderr":   stderr.String(),
+		"changed":  res.Changed,
+	}
+	if runErr != nil {
+		out["err"] = runErr.Error()
+	}
+	return helperResult(mustJSON(out)), nil
+}
+
+func resolveInstanceForMCP(name string) (provider.Provider, provider.Instance, error) {
+	if name == "" {
+		return nil, provider.Instance{}, fmt.Errorf("instance is required")
+	}
+	_, p, err := config.Load()
+	if err != nil {
+		return nil, provider.Instance{}, err
+	}
+	r, err := provider.LoadInstances(p)
+	if err != nil {
+		return nil, provider.Instance{}, err
+	}
+	inst, ok := r.Get(name)
+	if !ok {
+		return nil, provider.Instance{}, fmt.Errorf("unknown instance: %s", name)
+	}
+	pr, err := provider.Default().Get(inst.Provider)
+	if err != nil {
+		return nil, inst, err
+	}
+	return pr, inst, nil
+}
+
+func resolveDisposeMCP(flag, fromInstance string, fallback provider.Dispose) (provider.Dispose, error) {
+	if flag != "" {
+		return provider.ParseDispose(flag)
+	}
+	if fromInstance != "" {
+		return provider.ParseDispose(fromInstance)
+	}
+	return fallback, nil
 }
 
 func handleGUI(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
