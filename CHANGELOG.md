@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v0.1.1 candidate — full system control)
+
+- Instance `mounts:` block — host-to-guest file shares declared per instance.
+  Parallels: auto-configured as shared folders on `vmlab up` (visible as
+  `\\Mac\<name>` in Windows guests). SSH: rsync'd by `vmlab sync`.
+  Idempotent across re-Up.
+- `vmlab sync <instance>` — explicit sync command. For Parallels it
+  ensures shared folders are wired; for SSH it rsyncs each mount's host
+  path into the guest. `--path` overrides instance mounts:.
+- Snapshots: new `Snapshotter` capability interface; Parallels impl wraps
+  `prlctl snapshot/snapshot-list/snapshot-switch/snapshot-delete`.
+  CLI: `vmlab snapshot save/restore/ls/rm`. JSON output supported.
+- `vmlab wait <instance>` — re-poll provider readiness (Parallels Tools /
+  TCP:22) after a guest reboot, without re-doing `Up`. Backed by a new
+  `ReadyWaiter` optional interface; both Parallels and Hetzner expose it.
+- SSH transport `Sync` now uses rsync when available (incremental, much
+  faster than scp), falling back to scp on hosts without rsync.
+- Tests: parseSnapshotList (real prlctl --json output), ensureMounts
+  idempotency, snapshot ID lookup, parallels-guest Sync configures the
+  shared folder via `--shf-host-add`.
+
+**Live-verified on edis-mac-studio Win11:** mount config persists across
+Up cycles; guest read+write through `\\Mac\smoke`; snapshot save → ls →
+restore → rm; `vmlab wait` returns immediately when tools are up.
+
+**Known constraint:** `mounts.host` paths are resolved on the Parallels
+host (the Mac running Parallels Desktop), not on the laptop running
+vmlab. Cross-machine sync to the Parallels host is out of scope; if
+needed, rsync to that host first.
+
+
 ### Added (providers — v0.1.0 candidate)
 
 - Provider abstraction (`internal/provider`): lifecycle (`Status` / `Up` /

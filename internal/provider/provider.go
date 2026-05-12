@@ -108,6 +108,33 @@ type Provider interface {
 	Down(ctx context.Context, i Instance, d Dispose) error
 }
 
+// ReadyWaiter is an optional provider capability for re-polling guest
+// readiness without doing a full Up cycle. Useful after a reboot mid-flow
+// or before driving a fresh-booted box.
+type ReadyWaiter interface {
+	WaitReady(ctx context.Context, i Instance) error
+}
+
+// Snapshotter is an optional capability for providers that can checkpoint and
+// restore VM state (Parallels, Hetzner via images, EC2 via AMIs, …). Callers
+// detect support via a type assertion.
+type Snapshotter interface {
+	Snapshot(ctx context.Context, i Instance, name, description string) error
+	Restore(ctx context.Context, i Instance, name string) error
+	ListSnapshots(ctx context.Context, i Instance) ([]Snapshot, error)
+	DeleteSnapshot(ctx context.Context, i Instance, name string) error
+}
+
+// Snapshot is one saved checkpoint surfaced via ListSnapshots.
+type Snapshot struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Date     string `json:"date,omitempty"`
+	State    string `json:"state,omitempty"`
+	Current  bool   `json:"current,omitempty"`
+	Parent   string `json:"parent,omitempty"`
+}
+
 // Registry maps provider name -> implementation.
 type Registry struct {
 	mu sync.RWMutex

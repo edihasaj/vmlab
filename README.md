@@ -69,6 +69,9 @@ vmlab evidence show <run-id>
 | `vmlab up <instance>` | Ensure an instance is running and ready (idempotent). |
 | `vmlab down <instance> [--dispose=…]` | Dispose of an instance — `keep\|suspend\|poweroff\|destroy`. |
 | `vmlab with <instance> -- <cmd>` | Up → run → restore prior state. Honours `disposition.only_if_we_started`. |
+| `vmlab sync <instance>` | Wire host-to-guest shares (parallels) / rsync (ssh) per the instance's `mounts:`. |
+| `vmlab snapshot save/restore/ls/rm` | Manage instance snapshots (parallels today; Snapshotter is a per-provider opt-in). |
+| `vmlab wait <instance>` | Re-poll provider readiness (useful after a guest reboot mid-flow). |
 | `vmlab orphans [--destroy]` | List (and optionally clean) cloud resources tagged `vmlab=*`. |
 | `vmlab serve --mcp` | Speak Model Context Protocol over stdio for agent integration. |
 

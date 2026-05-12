@@ -291,6 +291,26 @@ func TestParallelsGuestRemoteQuoting(t *testing.T) {
 	}
 }
 
+func TestParallelsGuestSyncLocal(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "prlctl", 0)
+	withPath(t, dir)
+
+	tr := NewParallelsGuest()
+	tgt := target.Target{
+		Settings: map[string]any{"parallels": map[string]any{"vm": "Windows 11"}},
+	}
+	if err := tr.Sync(context.Background(), tgt, "/Users/edi/Projects/myapp"); err != nil {
+		t.Fatal(err)
+	}
+	got := readLastArgs(t, args)
+	for _, want := range []string{"set", "Windows 11", "--shf-host-add", "myapp", "--path", "/Users/edi/Projects/myapp"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in argv: %s", want, got)
+		}
+	}
+}
+
 func TestParallelsGuestPosixQuote(t *testing.T) {
 	cases := map[string]string{
 		"plain":         "plain",

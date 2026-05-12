@@ -8,9 +8,12 @@ package parallels
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -90,7 +93,150 @@ func (p *Provider) Up(ctx context.Context, i provider.Instance) (target.Target, 
 	if err := p.waitReady(ctx, i); err != nil {
 		return t, res, err
 	}
+	if err := p.ensureMounts(ctx, i); err != nil {
+		return t, res, err
+	}
 	return t, res, nil
+}
+
+// Snapshot creates a named checkpoint.
+func (p *Provider) Snapshot(ctx context.Context, i provider.Instance, name, description string) error {
+	vm := i.SettingString("parallels", "vm")
+	args := []string{"snapshot", vm, "--name", name}
+	if description != "" {
+		args = append(args, "--description", description)
+	}
+	_, err := p.runPrlctl(ctx, i, args...)
+	return err
+}
+
+// Restore switches to the named snapshot. The snapshot must exist.
+func (p *Provider) Restore(ctx context.Context, i provider.Instance, name string) error {
+	id, err := p.snapshotID(ctx, i, name)
+	if err != nil {
+		return err
+	}
+	vm := i.SettingString("parallels", "vm")
+	_, err = p.runPrlctl(ctx, i, "snapshot-switch", vm, "--id", id)
+	return err
+}
+
+// ListSnapshots returns every snapshot on the VM.
+func (p *Provider) ListSnapshots(ctx context.Context, i provider.Instance) ([]provider.Snapshot, error) {
+	vm := i.SettingString("parallels", "vm")
+	out, err := p.runPrlctl(ctx, i, "snapshot-list", vm, "--json")
+	if err != nil {
+		return nil, err
+	}
+	return parseSnapshotList(out)
+}
+
+// DeleteSnapshot removes a snapshot by name.
+func (p *Provider) DeleteSnapshot(ctx context.Context, i provider.Instance, name string) error {
+	id, err := p.snapshotID(ctx, i, name)
+	if err != nil {
+		return err
+	}
+	vm := i.SettingString("parallels", "vm")
+	_, err = p.runPrlctl(ctx, i, "snapshot-delete", vm, "--id", id)
+	return err
+}
+
+// snapshotID resolves a snapshot's UUID by its user-given name.
+func (p *Provider) snapshotID(ctx context.Context, i provider.Instance, name string) (string, error) {
+	snaps, err := p.ListSnapshots(ctx, i)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range snaps {
+		if s.Name == name {
+			return s.ID, nil
+		}
+	}
+	return "", fmt.Errorf("parallels: no snapshot named %q", name)
+}
+
+// parseSnapshotList interprets `prlctl snapshot-list <vm> --json` output.
+// Empty output (no snapshots) returns nil, nil.
+func parseSnapshotList(out string) ([]provider.Snapshot, error) {
+	out = strings.TrimSpace(out)
+	if out == "" || out == "{}" {
+		return nil, nil
+	}
+	var raw map[string]struct {
+		Name    string `json:"name"`
+		Date    string `json:"date"`
+		State   string `json:"state"`
+		Current bool   `json:"current"`
+		Parent  string `json:"parent"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("parse snapshot list: %w", err)
+	}
+	snaps := make([]provider.Snapshot, 0, len(raw))
+	for id, s := range raw {
+		snaps = append(snaps, provider.Snapshot{
+			ID:      id,
+			Name:    s.Name,
+			Date:    s.Date,
+			State:   s.State,
+			Current: s.Current,
+			Parent:  s.Parent,
+		})
+	}
+	return snaps, nil
+}
+
+// ensureMounts configures every mount on the VM as a Parallels shared folder.
+// Idempotent: `prlctl set --shf-host-add` failing with "already used" is
+// treated as success since the mount is already in place.
+func (p *Provider) ensureMounts(ctx context.Context, i provider.Instance) error {
+	if len(i.Mounts) == 0 {
+		return nil
+	}
+	vm := i.SettingString("parallels", "vm")
+	for _, m := range i.Mounts {
+		name := m.Name
+		host := expandHome(m.Host)
+		if name == "" {
+			name = sanitizeShareName(filepath.Base(host))
+		}
+		if host == "" {
+			return fmt.Errorf("mount %q: host is required", name)
+		}
+		args := []string{"set", vm, "--shf-host-add", name, "--path", host}
+		if strings.EqualFold(m.Mode, "ro") {
+			args = append(args, "--mode", "ro")
+		}
+		out, err := p.runPrlctl(ctx, i, args...)
+		if err != nil {
+			if strings.Contains(out, "already used") {
+				continue
+			}
+			return fmt.Errorf("mount %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func expandHome(path string) string {
+	if len(path) > 1 && path[0] == '~' && (path[1] == '/' || path[1] == filepath.Separator) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+// sanitizeShareName produces a Parallels-safe share name (no slashes, spaces).
+func sanitizeShareName(s string) string {
+	s = strings.ReplaceAll(s, "/", "_")
+	s = strings.ReplaceAll(s, "\\", "_")
+	s = strings.ReplaceAll(s, " ", "_")
+	if s == "" {
+		return "share"
+	}
+	return s
 }
 
 // Down disposes of the VM per the requested Dispose. Idempotent.
@@ -132,6 +278,13 @@ func (p *Provider) Down(ctx context.Context, i provider.Instance, d provider.Dis
 		return err
 	}
 	return fmt.Errorf("unknown dispose: %v", d)
+}
+
+// WaitReady is the exported version of waitReady — providers expose this via
+// the provider.ReadyWaiter interface so callers can re-poll after a reboot
+// without doing a full Up cycle.
+func (p *Provider) WaitReady(ctx context.Context, i provider.Instance) error {
+	return p.waitReady(ctx, i)
 }
 
 // waitReady polls `prlctl exec <vm> <probe>` until it succeeds or times out.

@@ -10,10 +10,22 @@ type Instance struct {
 	Ready    ReadyConfig    `yaml:"ready,omitempty"`
 	Target   TargetConfig   `yaml:"target,omitempty"`
 	Disp     DispositionCfg `yaml:"disposition,omitempty"`
+	Mounts   []Mount        `yaml:"mounts,omitempty"`
 	Settings map[string]any `yaml:",inline"`
 
 	// SourceFile is set by the loader.
 	SourceFile string `yaml:"-"`
+}
+
+// Mount declares a host-to-guest file share. Provider semantics:
+//   - parallels: creates a Parallels shared folder; visible as `\\Mac\<name>`
+//     in Windows guests. Auto-configured on Up.
+//   - hetzner / ssh: `vmlab sync` rsyncs Host into Guest on demand.
+type Mount struct {
+	Name  string `yaml:"name"`            // share name; defaults to basename of host
+	Host  string `yaml:"host"`            // host path (tilde-expanded)
+	Guest string `yaml:"guest,omitempty"` // informational guest path
+	Mode  string `yaml:"mode,omitempty"`  // ro | rw  (default rw)
 }
 
 // ReadyConfig describes how the provider decides "ready for traffic".

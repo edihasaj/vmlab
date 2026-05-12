@@ -50,14 +50,34 @@ func (s *sshTransport) Doctor(ctx context.Context, t target.Target) Health {
 }
 
 func (s *sshTransport) Sync(ctx context.Context, t target.Target, src string) error {
-	if !haveBinary("scp") {
-		return fmt.Errorf("ssh: scp not on PATH")
-	}
 	host := t.SettingString("ssh", "host")
 	user := sshUser(t)
 	dest := t.SettingString("ssh", "dest")
 	if dest == "" {
 		dest = "~/"
+	}
+	// Prefer rsync (incremental, deletes orphans with --delete optionally),
+	// fall back to scp.
+	if haveBinary("rsync") {
+		rsh := "ssh -o BatchMode=yes -o StrictHostKeyChecking=" + sshStrict(t)
+		if id := t.SettingString("ssh", "identity"); id != "" {
+			rsh += " -i " + id + " -o IdentitiesOnly=yes"
+		}
+		if port := t.SettingString("ssh", "port"); port != "" {
+			rsh += " -p " + port
+		}
+		args := []string{"-az", "--info=stats1", "-e", rsh, src, fmt.Sprintf("%s@%s:%s", user, host, dest)}
+		res, err := runExternal(ctx, "rsync", args, io.Discard, io.Discard)
+		if err != nil {
+			return err
+		}
+		if res.ExitCode != 0 {
+			return fmt.Errorf("rsync exit=%d", res.ExitCode)
+		}
+		return nil
+	}
+	if !haveBinary("scp") {
+		return fmt.Errorf("ssh: neither rsync nor scp on PATH")
 	}
 	args := []string{"-q"}
 	if id := t.SettingString("ssh", "identity"); id != "" {
@@ -75,6 +95,13 @@ func (s *sshTransport) Sync(ctx context.Context, t target.Target, src string) er
 		return fmt.Errorf("scp exit=%d", res.ExitCode)
 	}
 	return nil
+}
+
+func sshStrict(t target.Target) string {
+	if s := t.SettingString("ssh", "strictHost"); s != "" {
+		return s
+	}
+	return "yes"
 }
 
 func (s *sshTransport) Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {

@@ -26,7 +26,7 @@ func NewParallelsGuest() Transport { return &parallelsGuestTransport{bin: "ssh"}
 func (p *parallelsGuestTransport) Name() string { return "parallels-guest" }
 
 func (p *parallelsGuestTransport) Capabilities() Caps {
-	return Caps{Shell: false, Sync: false, Install: false}
+	return Caps{Shell: false, Sync: true, Install: false}
 }
 
 func (p *parallelsGuestTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -53,7 +53,43 @@ func (p *parallelsGuestTransport) Doctor(ctx context.Context, t target.Target) H
 }
 
 func (p *parallelsGuestTransport) Sync(ctx context.Context, t target.Target, src string) error {
-	return fmt.Errorf("parallels-guest: sync not supported")
+	// Live-add the source path as a Parallels shared folder. Idempotent:
+	// `prlctl set --shf-host-add` failing with "already used" means the
+	// folder is already mounted, which is a successful end state.
+	vm := t.SettingString("parallels", "vm")
+	if vm == "" {
+		return fmt.Errorf("parallels-guest: parallels.vm is required")
+	}
+	name := t.SettingString("parallels", "syncShareName")
+	if name == "" {
+		// derive from basename so the same source path stays stable.
+		n := src
+		for _, sep := range []string{"/", "\\"} {
+			if i := strings.LastIndex(n, sep); i >= 0 {
+				n = n[i+1:]
+			}
+		}
+		if n == "" {
+			n = "vmlab-sync"
+		}
+		name = n
+	}
+	args, err := prlctlArgs(t, []string{"set", vm, "--shf-host-add", name, "--path", src})
+	if err != nil {
+		return err
+	}
+	var buf strings.Builder
+	res, runErr := runExternal(ctx, args[0], args[1:], &buf, &buf)
+	if runErr == nil && res.ExitCode == 0 {
+		return nil
+	}
+	if strings.Contains(buf.String(), "already used") {
+		return nil
+	}
+	if runErr != nil {
+		return runErr
+	}
+	return fmt.Errorf("parallels-guest sync: exit=%d: %s", res.ExitCode, strings.TrimSpace(buf.String()))
 }
 
 func (p *parallelsGuestTransport) Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {

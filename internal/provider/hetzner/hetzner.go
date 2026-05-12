@@ -255,6 +255,16 @@ func buildTarget(i provider.Instance, ip string) target.Target {
 	}
 }
 
+// WaitReady polls TCP :22 on the server's public IP until reachable.
+// Implements provider.ReadyWaiter so `vmlab wait` works against Hetzner.
+func (p *Provider) WaitReady(ctx context.Context, i provider.Instance) error {
+	ip, err := p.publicIP(ctx, i)
+	if err != nil {
+		return err
+	}
+	return waitForTCP(ctx, ip, 22, readyTimeout(i))
+}
+
 // waitForTCP dials host:port until the deadline. No banner check — Up callers
 // use the SSH transport's own command-exec for verification, not us.
 func waitForTCP(ctx context.Context, host string, port int, timeout time.Duration) error {

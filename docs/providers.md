@@ -44,6 +44,36 @@ disposition:
   only_if_we_started: true  # never suspend a VM the user was already using
 ```
 
+### Mounts
+
+`mounts:` declares host-to-guest file shares. Each provider wires them up
+its own way:
+
+| Provider | Implementation | Guest path |
+|---|---|---|
+| `parallels` | `prlctl set --shf-host-add` (configured automatically on `vmlab up`) | `\\Mac\<name>` |
+| `ssh` / `hetzner` | rsync via `vmlab sync` | `<guest>` (the mount's `guest:` field) |
+
+```yaml
+mounts:
+  - name: app
+    host: /Users/edihasaj/Projects/myapp   # parallels: path on the Mac running Parallels Desktop
+    guest: 'Z:\app'                        # informational (Parallels) / rsync target (SSH)
+    mode: rw                               # ro | rw  (default rw)
+```
+
+**Watch out:** for `parallels` with `host:` set to a remote Mac, the
+`mounts[*].host` paths are interpreted on **that remote Mac**, not your
+laptop. Create the directory on the Parallels host (or rsync to it
+first).
+
+### Snapshots
+
+Providers that implement the optional `Snapshotter` capability expose
+`vmlab snapshot save/restore/ls/rm`. Parallels supports it via
+`prlctl snapshot*`; Hetzner does not yet (use `hcloud image create`
+manually).
+
 `only_if_we_started: true` (default for the `with` flow) is the safety net
 from the bash smoke: cleanup is gated by `EnsureResult.Changed`. If the VM
 was already running when `Up` ran, `Down` does nothing.
