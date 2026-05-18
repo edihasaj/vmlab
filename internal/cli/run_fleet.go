@@ -113,6 +113,9 @@ func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string
 		Name:     strings.TrimPrefix(selectorArg, "@@"),
 		Provider: "fleet",
 	}
+	if run != nil {
+		_ = run.MarkRunning()
+	}
 	nfy := loadNotifier(cmd, paths, noNotify, fleetInst, selectorArg+fmt.Sprintf(" ×%d", len(insts)), cmdLine, run)
 	nfy.Start()
 

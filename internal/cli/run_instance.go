@@ -92,6 +92,9 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	if loadedFlow != nil {
 		cmdline = loadedFlow.SourceFile
 	}
+	if run != nil {
+		_ = run.MarkRunning()
+	}
 	nfy := loadNotifier(cmd, paths, noNotify, inst, "@"+inst.Name, cmdline, run)
 	nfy.Start()
 

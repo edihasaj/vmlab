@@ -151,6 +151,9 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				run.SetSelector("@" + instance.Name)
 			}
 
+			if run != nil {
+				_ = run.MarkRunning()
+			}
 			nfy := loadNotifier(cmd, paths, noNotify, instance, "@"+instance.Name, joinArgs(rest), run)
 			nfy.Start()
 

@@ -46,6 +46,8 @@ func NewRoot() *cobra.Command {
 		newScreenshotCmd(),
 		newEvidenceCmd(),
 		newUsageCmd(),
+		newAttachCmd(),
+		newCancelCmd(),
 		newOrphansCmd(),
 		newNotifyCmd(),
 		newServeCmd(),

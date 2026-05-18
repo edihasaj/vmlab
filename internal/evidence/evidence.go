@@ -163,7 +163,9 @@ func (r *Run) AddTarget(s TargetSummary) {
 	r.meta.Targets = append(r.meta.Targets, s)
 }
 
-// Finish writes meta.json and returns the final RunMeta.
+// Finish writes meta.json and returns the final RunMeta. Also removes the
+// running.lock marker so `vmlab attach` and `vmlab cancel` consider the run
+// complete.
 func (r *Run) Finish(exitCode int) (RunMeta, error) {
 	r.meta.FinishedAt = time.Now().UTC()
 	r.meta.DurationMs = r.meta.FinishedAt.Sub(r.meta.StartedAt).Milliseconds()
@@ -176,7 +178,47 @@ func (r *Run) Finish(exitCode int) (RunMeta, error) {
 	if err != nil {
 		return r.meta, err
 	}
+	_ = os.Remove(filepath.Join(r.Dir, "running.lock"))
 	return r.meta, os.WriteFile(filepath.Join(r.Dir, "meta.json"), data, 0o644)
+}
+
+// MarkRunning writes a running.lock file with the current process PID into
+// the run dir. Used by lifecycle-wrapped CLI commands (`with`, `run @<inst>`,
+// `run @@<class>`, `image build`) so `vmlab attach <run-id>` and
+// `vmlab cancel <run-id>` can find the live process. Best-effort — failures
+// are logged but never block the run.
+func (r *Run) MarkRunning() error {
+	pid := os.Getpid()
+	state := map[string]any{
+		"pid":     pid,
+		"started": r.meta.StartedAt,
+		"cmd":     r.meta.Cmd,
+		"flow":    r.meta.Flow,
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(r.Dir, "running.lock"), data, 0o644)
+}
+
+// RunningState is the parsed shape of running.lock.
+type RunningState struct {
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+	Cmd     string    `json:"cmd,omitempty"`
+	Flow    string    `json:"flow,omitempty"`
+}
+
+// ReadRunningState returns the running.lock contents for runDir or an error
+// (os.ErrNotExist when the file isn't present — run has finished).
+func ReadRunningState(runDir string) (RunningState, error) {
+	var s RunningState
+	data, err := os.ReadFile(filepath.Join(runDir, "running.lock"))
+	if err != nil {
+		return s, err
+	}
+	return s, json.Unmarshal(data, &s)
 }
 
 // Read loads a meta.json from a run directory.

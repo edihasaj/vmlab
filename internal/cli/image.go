@@ -93,6 +93,7 @@ it's a named PRL snapshot.`,
 			}
 			run.SetFlow(f.SourceFile)
 			run.SetSelector("@" + inst.Name + " image:" + name)
+			_ = run.MarkRunning()
 
 			nfy := loadNotifier(cmd, paths, false, inst, "image:"+name, f.SourceFile, run)
 			nfy.Start()
