@@ -10,8 +10,10 @@ import (
 
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
+	"github.com/edihasaj/vmlab/internal/hooks"
 	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/state"
+	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
 )
@@ -152,6 +154,13 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 			nfy := loadNotifier(cmd, paths, noNotify, instance, "@"+instance.Name, joinArgs(rest), run)
 			nfy.Start()
 
+			// pre_up hooks (no transport yet)
+			if err := runLifecycleHooks(cmd, run, hooks.PhasePreUp, instance.Hooks.PreUp, nil, target.Target{}); err != nil {
+				finishLifecycle(run, instance, provider.EnsureResult{}, "", 0, 0, 0, err)
+				nfy.Finish(0, 0, 0, 1, err)
+				return err
+			}
+
 			// up
 			upStart := time.Now()
 			tgt, res, upErr := pr.Up(cmd.Context(), instance)
@@ -195,9 +204,25 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				teeOut, teeErr, logs = o, e, l
 				defer logs.Close()
 			}
+
+			// post_up hooks (transport now ready)
+			if err := runLifecycleHooks(cmd, run, hooks.PhasePostUp, instance.Hooks.PostUp, tr, tgt); err != nil {
+				downMs, _ := cleanupAndFinish(cmd, run, pr, instance, res, only, restoreOnFailure, upMs, 0, err)
+				nfy.Finish(upMs, 0, downMs, 1, err)
+				return err
+			}
+
 			runStart := time.Now()
 			result, runErr := tr.Run(ctx, tgt, rest, teeOut, teeErr)
 			runMs := time.Since(runStart).Milliseconds()
+
+			// pre_down hooks (still have transport)
+			if hookErr := runLifecycleHooks(cmd, run, hooks.PhasePreDown, instance.Hooks.PreDown, tr, tgt); hookErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "with: pre_down hooks failed: %v\n", hookErr)
+				if runErr == nil {
+					runErr = hookErr
+				}
+			}
 
 			// cleanup + finalise
 			downMs, downErr := cleanupAndFinish(cmd, run, pr, instance, res, only, pickDispose(runErr, result.ExitCode, restoreOnSuccess, restoreOnFailure), upMs, runMs, runErr)

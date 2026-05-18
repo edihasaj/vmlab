@@ -1,5 +1,7 @@
 package provider
 
+import "github.com/edihasaj/vmlab/internal/hooks"
+
 // Instance is the declarative input every Provider operates on. It is loaded
 // from ~/.vmlab/instances/<name>.yaml (and repo overrides) and validated
 // against schema/instance.schema.json.
@@ -11,6 +13,7 @@ type Instance struct {
 	Target   TargetConfig   `yaml:"target,omitempty"`
 	Disp     DispositionCfg `yaml:"disposition,omitempty"`
 	Mounts   []Mount        `yaml:"mounts,omitempty"`
+	Hooks    hooks.Config   `yaml:"hooks,omitempty"`
 	Settings map[string]any `yaml:",inline"`
 
 	// SourceFile is set by the loader.

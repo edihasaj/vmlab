@@ -60,7 +60,44 @@
         },
         "additionalProperties": false
       }
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {
+        "pre_up":   { "$ref": "#/$defs/hookList" },
+        "post_up":  { "$ref": "#/$defs/hookList" },
+        "pre_down": { "$ref": "#/$defs/hookList" }
+      },
+      "additionalProperties": false
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "$defs": {
+    "hookList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/hookStep" }
+    },
+    "hookStep": {
+      "type": "object",
+      "properties": {
+        "name":        { "type": "string" },
+        "run":         { "type": "string" },
+        "exec":        { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "target":      { "type": "string" },
+        "target_exec": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "ignore_failure": { "type": "boolean" }
+      },
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["run"] },
+        { "required": ["exec"] },
+        { "required": ["target"] },
+        { "required": ["target_exec"] }
+      ]
+    }
+  }
 }

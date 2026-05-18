@@ -12,7 +12,9 @@ import (
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/flow"
+	"github.com/edihasaj/vmlab/internal/hooks"
 	"github.com/edihasaj/vmlab/internal/provider"
+	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +44,7 @@ func instanceShortcut(selectorArg string, p config.Paths) (string, bool) {
 // instance up, runs the flow or command against the emitted target, then
 // disposes per the instance's disposition. Always single-target — to fan
 // out across instances use a target tag instead.
-func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence, noNotify bool) error {
+func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence, noNotify bool, retries int) error {
 	pr, inst, err := resolveInstance(name)
 	if err != nil {
 		return err
@@ -93,6 +95,15 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	nfy := loadNotifier(cmd, paths, noNotify, inst, "@"+inst.Name, cmdline, run)
 	nfy.Start()
 
+	if err := runLifecycleHooks(cmd, run, hooks.PhasePreUp, inst.Hooks.PreUp, nil, target.Target{}); err != nil {
+		finishLifecycle(run, inst, provider.EnsureResult{}, "", 0, 0, 0, err)
+		nfy.Finish(0, 0, 0, 1, err)
+		if run != nil {
+			run.Finish(1)
+		}
+		return err
+	}
+
 	upStart := time.Now()
 	tgt, ensure, upErr := pr.Up(cmd.Context(), inst)
 	upMs := time.Since(upStart).Milliseconds()
@@ -140,25 +151,62 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 		defer logs.Close()
 	}
 
+	if err := runLifecycleHooks(cmd, run, hooks.PhasePostUp, inst.Hooks.PostUp, tr, tgt); err != nil {
+		downMs, _ := cleanupInstance(cmd, run, pr, inst, ensure, only, onFailure, upMs, 0, err)
+		if logs != nil {
+			_ = logs.Close()
+		}
+		if run != nil {
+			run.Finish(1)
+		}
+		nfy.Finish(upMs, 0, downMs, 1, err)
+		return err
+	}
+
 	runStart := time.Now()
 	exit := 0
 	var runErr error
-	if loadedFlow != nil {
-		steps, ferr := flow.Run(cmd.Context(), tr, tgt, loadedFlow, teeOut, teeErr)
-		runErr = ferr
-		exit = lastExit(steps, ferr)
-		if run != nil {
-			_, _ = run.WriteSteps(inst.Name, steps)
+	attempts := 0
+	for attempt := 0; attempt <= retries; attempt++ {
+		attempts = attempt + 1
+		if attempt > 0 {
+			fmt.Fprintf(cmd.ErrOrStderr(), "\nrun @%s: retry %d/%d after exit=%d\n", inst.Name, attempt, retries, exit)
 		}
-	} else {
-		res, rerr := tr.Run(cmd.Context(), tgt, cmdArgs, teeOut, teeErr)
-		runErr = rerr
-		exit = res.ExitCode
-		if rerr != nil && exit == 0 {
-			exit = 1
+		exit = 0
+		runErr = nil
+		if loadedFlow != nil {
+			steps, ferr := flow.Run(cmd.Context(), tr, tgt, loadedFlow, teeOut, teeErr)
+			runErr = ferr
+			exit = lastExit(steps, ferr)
+			if run != nil {
+				_, _ = run.WriteSteps(inst.Name, steps)
+			}
+		} else {
+			res, rerr := tr.Run(cmd.Context(), tgt, cmdArgs, teeOut, teeErr)
+			runErr = rerr
+			exit = res.ExitCode
+			if rerr != nil && exit == 0 {
+				exit = 1
+			}
+		}
+		if exit == 0 && runErr == nil {
+			break
 		}
 	}
 	runMs := time.Since(runStart).Milliseconds()
+	if run != nil && attempts > 1 {
+		_ = run.WriteFile("attempts.txt", []byte(fmt.Sprintf("%d\n", attempts)))
+	}
+
+	if hookErr := runLifecycleHooks(cmd, run, hooks.PhasePreDown, inst.Hooks.PreDown, tr, tgt); hookErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "run @%s: pre_down hooks failed: %v\n", inst.Name, hookErr)
+		if runErr == nil {
+			runErr = hookErr
+			if exit == 0 {
+				exit = 1
+			}
+		}
+	}
 
 	want := onSuccess
 	if exit != 0 || runErr != nil {

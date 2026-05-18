@@ -26,6 +26,7 @@ func newRunCmd() *cobra.Command {
 		noEvidence      bool
 		noNotify        bool
 		dryRun          bool
+		retries         int
 	)
 	c := &cobra.Command{
 		Use:   "run <selector> <flow-or-cmd>...",
@@ -56,7 +57,7 @@ Examples:
 			// selectors (`@tag`, `<name>`, `all`) keep their meaning when no
 			// instance matches; instance wins on exact `@<name>` collision.
 			if name, ok := instanceShortcut(selectorArg, p); ok {
-				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify)
+				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify, retries)
 			}
 
 			r, err := target.Load(p)
@@ -194,6 +195,7 @@ Examples:
 	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
 	c.Flags().BoolVar(&noNotify, "no-notify", false, "skip configured notifiers (Discord etc.)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan (targets + steps) without executing")
+	c.Flags().IntVar(&retries, "retries", 0, "retry the inner run on failure (only for @<instance>; lifecycle Up/Down run once)")
 	return c
 }
 
