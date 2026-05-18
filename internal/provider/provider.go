@@ -135,6 +135,25 @@ type Snapshot struct {
 	Parent   string `json:"parent,omitempty"`
 }
 
+// OrphanSweeper is an optional capability for providers that can enumerate
+// and destroy resources they own which carry the vmlab=<name> tag — the
+// cost safety net. Implemented per provider so the CLI can fan out across
+// every registered backend.
+type OrphanSweeper interface {
+	ListOrphans(ctx context.Context) ([]Orphan, error)
+	DeleteOrphan(ctx context.Context, name string) error
+}
+
+// Orphan is one stranded provider resource. Provider is filled by the CLI
+// from the originating provider name; impls only need to populate Name,
+// Status, Label.
+type Orphan struct {
+	Provider string `json:"provider"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+	Label    string `json:"label"`
+}
+
 // Registry maps provider name -> implementation.
 type Registry struct {
 	mu sync.RWMutex

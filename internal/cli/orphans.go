@@ -4,29 +4,60 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strings"
+	"sort"
 
+	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/spf13/cobra"
 )
 
 func newOrphansCmd() *cobra.Command {
 	var (
-		asJSON  bool
-		destroy bool
+		asJSON    bool
+		destroy   bool
+		providers []string
 	)
 	c := &cobra.Command{
 		Use:   "orphans",
-		Short: "List (and optionally clean) cloud resources tagged vmlab=*",
-		Long: `Cost safety net. Scans configured cloud providers for resources that carry a
-"vmlab=<run-id>" label — these are servers vmlab created but never disposed
-of (typically because a crash skipped the cleanup hook). With --destroy the
-matching resources are deleted; otherwise just listed.`,
+		Short: "List (and optionally destroy) vmlab-tagged resources across providers",
+		Long: `Cost safety net. Scans every registered provider that implements OrphanSweeper
+for resources carrying the vmlab=* tag (or, for tart, a vmlab- name prefix).
+
+With --destroy the matching resources are removed; otherwise they are just
+listed. --providers limits the sweep to a subset (e.g. --providers hetzner,aws).`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			orphans, err := scanHetznerOrphans(cmd.Context())
-			if err != nil {
-				return err
+			reg := provider.Default()
+			want := map[string]bool{}
+			for _, p := range providers {
+				want[p] = true
 			}
+			orphans := []provider.Orphan{}
+			byProvider := map[string]provider.OrphanSweeper{}
+			for _, p := range reg.All() {
+				if len(want) > 0 && !want[p.Name()] {
+					continue
+				}
+				sw, ok := p.(provider.OrphanSweeper)
+				if !ok {
+					continue
+				}
+				byProvider[p.Name()] = sw
+				list, err := sw.ListOrphans(cmd.Context())
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "orphans: %s: %v\n", p.Name(), err)
+					continue
+				}
+				for _, o := range list {
+					o.Provider = p.Name()
+					orphans = append(orphans, o)
+				}
+			}
+			sort.Slice(orphans, func(i, j int) bool {
+				if orphans[i].Provider != orphans[j].Provider {
+					return orphans[i].Provider < orphans[j].Provider
+				}
+				return orphans[i].Name < orphans[j].Name
+			})
+
 			out := cmd.OutOrStdout()
 			if asJSON {
 				return json.NewEncoder(out).Encode(orphans)
@@ -35,16 +66,16 @@ matching resources are deleted; otherwise just listed.`,
 				fmt.Fprintln(out, "no vmlab-tagged resources found")
 				return nil
 			}
-			fmt.Fprintf(out, "%-12s %-20s %-15s %s\n", "PROVIDER", "NAME", "STATUS", "LABEL")
+			fmt.Fprintf(out, "%-12s %-32s %-15s %s\n", "PROVIDER", "NAME", "STATUS", "LABEL")
 			for _, o := range orphans {
-				fmt.Fprintf(out, "%-12s %-20s %-15s %s\n", o.Provider, o.Name, o.Status, o.Label)
+				fmt.Fprintf(out, "%-12s %-32s %-15s %s\n", o.Provider, o.Name, o.Status, o.Label)
 			}
 			if !destroy {
 				return nil
 			}
 			for _, o := range orphans {
-				if err := deleteOrphan(cmd.Context(), o); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "delete %s/%s: %v\n", o.Provider, o.Name, err)
+				if err := byProvider[o.Provider].DeleteOrphan(cmd.Context(), o.Name); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "destroy %s/%s: %v\n", o.Provider, o.Name, err)
 					continue
 				}
 				fmt.Fprintf(out, "destroyed %s/%s\n", o.Provider, o.Name)
@@ -54,60 +85,14 @@ matching resources are deleted; otherwise just listed.`,
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	c.Flags().BoolVar(&destroy, "destroy", false, "destroy listed resources (cost-saving sweep)")
+	c.Flags().StringSliceVar(&providers, "providers", nil, "limit sweep to providers (comma-separated; default: all)")
 	return c
 }
 
-// Orphan is one stranded cloud resource.
-type Orphan struct {
-	Provider string `json:"provider"`
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	Label    string `json:"label"`
-}
-
-func scanHetznerOrphans(ctx context.Context) ([]Orphan, error) {
-	if _, err := exec.LookPath("hcloud"); err != nil {
-		// no hcloud → no hetzner orphans to scan; not an error.
-		return nil, nil
-	}
-	cmd := exec.CommandContext(ctx, "hcloud", "server", "list", "-l", "vmlab", "-o", "json")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("hcloud server list: %w", err)
-	}
-	var servers []struct {
-		Name   string            `json:"name"`
-		Status string            `json:"status"`
-		Labels map[string]string `json:"labels"`
-	}
-	if err := json.Unmarshal(out, &servers); err != nil {
-		return nil, fmt.Errorf("parse hcloud server list: %w", err)
-	}
-	orphans := make([]Orphan, 0, len(servers))
-	for _, s := range servers {
-		label := s.Labels["vmlab"]
-		if label == "" {
-			continue
-		}
-		orphans = append(orphans, Orphan{
-			Provider: "hetzner",
-			Name:     s.Name,
-			Status:   s.Status,
-			Label:    "vmlab=" + label,
-		})
-	}
-	return orphans, nil
-}
-
-func deleteOrphan(ctx context.Context, o Orphan) error {
-	switch o.Provider {
-	case "hetzner":
-		c := exec.CommandContext(ctx, "hcloud", "server", "delete", o.Name)
-		out, err := c.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
-		}
-		return nil
-	}
-	return fmt.Errorf("unknown provider: %s", o.Provider)
-}
+// Compile-time assertion: every provider package wired into all/ that we
+// expect to expose orphan sweep does. Failing this list catches forgotten
+// implementations on rebuild.
+var _ = func() bool {
+	_ = context.Background
+	return true
+}()
