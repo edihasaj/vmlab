@@ -130,12 +130,14 @@ func TestToolsListReadOnly(t *testing.T) {
 	for _, n := range names {
 		got[n] = true
 	}
-	for _, want := range []string{"vmlab_targets", "vmlab_doctor", "vmlab_evidence", "vmlab_instances"} {
+	for _, want := range []string{"vmlab_targets", "vmlab_doctor", "vmlab_evidence", "vmlab_instances",
+		"vmlab_usage", "vmlab_orphans"} {
 		if !got[want] {
 			t.Errorf("missing tool %q (have: %v)", want, names)
 		}
 	}
-	for _, no := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with"} {
+	for _, no := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with",
+		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy"} {
 		if got[no] {
 			t.Errorf("write-mode tool %q unexpectedly exposed without --allow-write", no)
 		}
@@ -151,7 +153,8 @@ func TestToolsListAllowWrite(t *testing.T) {
 	for _, n := range names {
 		got[n] = true
 	}
-	for _, want := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with"} {
+	for _, want := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with",
+		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy"} {
 		if !got[want] {
 			t.Errorf("missing tool %q (have: %v)", want, names)
 		}
@@ -320,5 +323,81 @@ func TestToolsCallTargetsEmpty(t *testing.T) {
 	text, _ := first["text"].(string)
 	if !strings.Contains(text, "null") && !strings.Contains(text, "[]") {
 		t.Fatalf("expected empty targets, got: %s", text)
+	}
+}
+
+func TestMCPUsageAggregatesEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runsDir := filepath.Join(home, ".vmlab", "runs")
+	writeMCPRun(t, runsDir, "r1", "hetzner", "linux-a", 0, 1000, 5000, 200)
+	writeMCPRun(t, runsDir, "r2", "azure", "win-b", 1, 1500, 800, 300)
+
+	c := startServer(t, false)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_usage",
+		"arguments": map[string]any{},
+	}, 50)
+	text := toolText(t, resp)
+	if !strings.Contains(text, "linux-a") || !strings.Contains(text, "win-b") {
+		t.Errorf("usage missing instances: %s", text)
+	}
+}
+
+func TestMCPCancelMissingRunFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_cancel",
+		"arguments": map[string]any{"runId": "no-such-run"},
+	}, 51)
+	r, _ := resp["result"].(map[string]any)
+	if r == nil {
+		t.Fatalf("no result: %#v", resp)
+	}
+	if isErr, _ := r["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true for missing run, got: %#v", r)
+	}
+}
+
+func TestMCPCancelRequiresRunId(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := startServer(t, true)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_cancel",
+		"arguments": map[string]any{},
+	}, 52)
+	r, _ := resp["result"].(map[string]any)
+	if isErr, _ := r["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true for missing runId, got: %#v", r)
+	}
+}
+
+func writeMCPRun(t *testing.T, root, id, provider, instance string, exit int, upMs, runMs, downMs int64) {
+	t.Helper()
+	dir := filepath.Join(root, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := map[string]any{
+		"id":         id,
+		"startedAt":  time.Now().UTC().Format(time.RFC3339Nano),
+		"exitCode":   exit,
+		"durationMs": upMs + runMs + downMs,
+		"lifecycle": map[string]any{
+			"instance": instance,
+			"provider": provider,
+			"upMs":     upMs,
+			"runMs":    runMs,
+			"downMs":   downMs,
+		},
+	}
+	b, _ := json.MarshalIndent(meta, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

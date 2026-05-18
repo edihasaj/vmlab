@@ -36,6 +36,7 @@ func Serve(ctx context.Context, opts Options) error {
 		mcpserver.WithToolCapabilities(true),
 	)
 	registerTools(s, opts.AllowWrite)
+	registerExtraTools(s, opts.AllowWrite)
 
 	stdio := mcpserver.NewStdioServer(s)
 	stdio.SetErrorLogger(log.New(io.Discard, "", 0))
