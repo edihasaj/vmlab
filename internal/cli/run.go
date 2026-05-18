@@ -24,6 +24,7 @@ func newRunCmd() *cobra.Command {
 		continueOnError bool
 		asJSON          bool
 		noEvidence      bool
+		noNotify        bool
 		dryRun          bool
 	)
 	c := &cobra.Command{
@@ -55,7 +56,7 @@ Examples:
 			// selectors (`@tag`, `<name>`, `all`) keep their meaning when no
 			// instance matches; instance wins on exact `@<name>` collision.
 			if name, ok := instanceShortcut(selectorArg, p); ok {
-				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence)
+				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify)
 			}
 
 			r, err := target.Load(p)
@@ -191,6 +192,7 @@ Examples:
 	c.Flags().BoolVar(&continueOnError, "continue-on-error", false, "ignore failures and run every target")
 	c.Flags().BoolVar(&asJSON, "json", false, "emit JSON summary at the end")
 	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
+	c.Flags().BoolVar(&noNotify, "no-notify", false, "skip configured notifiers (Discord etc.)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan (targets + steps) without executing")
 	return c
 }

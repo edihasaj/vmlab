@@ -107,6 +107,7 @@ func newWithCmd() *cobra.Command {
 		dispose    string
 		timeout    time.Duration
 		noEvidence bool
+		noNotify   bool
 	)
 	c := &cobra.Command{
 		Use:   "with <instance> -- <cmd>...",
@@ -148,6 +149,9 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				run.SetSelector("@" + instance.Name)
 			}
 
+			nfy := loadNotifier(cmd, paths, noNotify, instance, "@"+instance.Name, joinArgs(rest), run)
+			nfy.Start()
+
 			// up
 			upStart := time.Now()
 			tgt, res, upErr := pr.Up(cmd.Context(), instance)
@@ -157,6 +161,7 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 			}
 			if upErr != nil {
 				finishLifecycle(run, instance, res, "", upMs, 0, 0, upErr)
+				nfy.Finish(upMs, 0, 0, 1, upErr)
 				return upErr
 			}
 
@@ -174,7 +179,8 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 			reg := transport.Default()
 			tr, err := reg.Get(tgt.Transport)
 			if err != nil {
-				cleanupAndFinish(cmd, run, pr, instance, res, only, restoreOnFailure, upMs, 0, err)
+				downMs, _ := cleanupAndFinish(cmd, run, pr, instance, res, only, restoreOnFailure, upMs, 0, err)
+				nfy.Finish(upMs, 0, downMs, 1, err)
 				return err
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
@@ -197,11 +203,14 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 			downMs, downErr := cleanupAndFinish(cmd, run, pr, instance, res, only, pickDispose(runErr, result.ExitCode, restoreOnSuccess, restoreOnFailure), upMs, runMs, runErr)
 			_ = downErr // already logged inside helper
 
+			exit := result.ExitCode
+			if runErr != nil && exit == 0 {
+				exit = 1
+			}
+			if logs != nil {
+				_ = logs.Close()
+			}
 			if run != nil {
-				exit := result.ExitCode
-				if runErr != nil && exit == 0 {
-					exit = 1
-				}
 				run.AddTarget(evidence.TargetSummary{
 					Name:      instance.Name,
 					Transport: tgt.Transport,
@@ -213,6 +222,7 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s) up=%dms run=%dms down=%dms\n",
 					meta.ID, run.Dir, upMs, runMs, downMs)
 			}
+			nfy.Finish(upMs, runMs, downMs, exit, runErr)
 			if runErr != nil {
 				return runErr
 			}
@@ -225,6 +235,7 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 	c.Flags().StringVar(&dispose, "dispose", "", "keep|suspend|poweroff|destroy (defaults to instance disposition)")
 	c.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "max time for the inner command")
 	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
+	c.Flags().BoolVar(&noNotify, "no-notify", false, "skip configured notifiers (Discord etc.)")
 	return c
 }
 

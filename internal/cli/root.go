@@ -45,6 +45,7 @@ func NewRoot() *cobra.Command {
 		newScreenshotCmd(),
 		newEvidenceCmd(),
 		newOrphansCmd(),
+		newNotifyCmd(),
 		newServeCmd(),
 	)
 	return root

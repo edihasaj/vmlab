@@ -42,7 +42,7 @@ func instanceShortcut(selectorArg string, p config.Paths) (string, bool) {
 // instance up, runs the flow or command against the emitted target, then
 // disposes per the instance's disposition. Always single-target — to fan
 // out across instances use a target tag instead.
-func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence bool) error {
+func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence, noNotify bool) error {
 	pr, inst, err := resolveInstance(name)
 	if err != nil {
 		return err
@@ -86,6 +86,13 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 		run.SetSelector("@" + inst.Name)
 	}
 
+	cmdline := joinArgs(cmdArgs)
+	if loadedFlow != nil {
+		cmdline = loadedFlow.SourceFile
+	}
+	nfy := loadNotifier(cmd, paths, noNotify, inst, "@"+inst.Name, cmdline, run)
+	nfy.Start()
+
 	upStart := time.Now()
 	tgt, ensure, upErr := pr.Up(cmd.Context(), inst)
 	upMs := time.Since(upStart).Milliseconds()
@@ -94,6 +101,7 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	}
 	if upErr != nil {
 		finishLifecycle(run, inst, ensure, "", upMs, 0, 0, upErr)
+		nfy.Finish(upMs, 0, 0, 1, upErr)
 		if run != nil {
 			run.Finish(1)
 		}
@@ -113,10 +121,11 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	reg := transport.Default()
 	tr, err := reg.Get(tgt.Transport)
 	if err != nil {
-		cleanupInstance(cmd, run, pr, inst, ensure, only, onFailure, upMs, 0, err)
+		downMs, _ := cleanupInstance(cmd, run, pr, inst, ensure, only, onFailure, upMs, 0, err)
 		if run != nil {
 			run.Finish(1)
 		}
+		nfy.Finish(upMs, 0, downMs, 1, err)
 		return err
 	}
 
@@ -157,6 +166,9 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	}
 	downMs, _ := cleanupInstance(cmd, run, pr, inst, ensure, only, want, upMs, runMs, runErr)
 
+	if logs != nil {
+		_ = logs.Close()
+	}
 	if run != nil {
 		run.AddTarget(evidence.TargetSummary{
 			Name:      inst.Name,
@@ -170,6 +182,7 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 		fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s) up=%dms run=%dms down=%dms\n",
 			meta.ID, run.Dir, upMs, runMs, downMs)
 	}
+	nfy.Finish(upMs, runMs, downMs, exit, runErr)
 
 	if asJSON {
 		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
