@@ -56,7 +56,8 @@
           "name":  { "type": "string", "minLength": 1 },
           "host":  { "type": "string", "minLength": 1 },
           "guest": { "type": "string" },
-          "mode":  { "type": "string", "enum": ["ro", "rw"] }
+          "mode":  { "type": "string", "enum": ["ro", "rw"] },
+          "from_laptop": { "type": "boolean" }
         },
         "additionalProperties": false
       }

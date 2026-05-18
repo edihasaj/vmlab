@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -190,11 +191,17 @@ func parseSnapshotList(out string) ([]provider.Snapshot, error) {
 // ensureMounts configures every mount on the VM as a Parallels shared folder.
 // Idempotent: `prlctl set --shf-host-add` failing with "already used" is
 // treated as success since the mount is already in place.
+//
+// For mounts with from_laptop=true and a remote parallels.host, rsyncs the
+// laptop-resolved Host path to a cache dir on the Parallels host first and
+// shares THAT path instead — closing the "files are on the laptop but the
+// Parallels host can't see them" gap.
 func (p *Provider) ensureMounts(ctx context.Context, i provider.Instance) error {
 	if len(i.Mounts) == 0 {
 		return nil
 	}
 	vm := i.SettingString("parallels", "vm")
+	remoteHost := i.SettingString("parallels", "host")
 	for _, m := range i.Mounts {
 		name := m.Name
 		host := expandHome(m.Host)
@@ -204,7 +211,17 @@ func (p *Provider) ensureMounts(ctx context.Context, i provider.Instance) error 
 		if host == "" {
 			return fmt.Errorf("mount %q: host is required", name)
 		}
-		args := []string{"set", vm, "--shf-host-add", name, "--path", host}
+
+		sharePath := host
+		if m.FromLaptop && remoteHost != "" {
+			cached, err := p.syncLaptopToParallelsHost(ctx, i, name, host)
+			if err != nil {
+				return fmt.Errorf("mount %q: sync to %s: %w", name, remoteHost, err)
+			}
+			sharePath = cached
+		}
+
+		args := []string{"set", vm, "--shf-host-add", name, "--path", sharePath}
 		if strings.EqualFold(m.Mode, "ro") {
 			args = append(args, "--mode", "ro")
 		}
@@ -217,6 +234,73 @@ func (p *Provider) ensureMounts(ctx context.Context, i provider.Instance) error 
 		}
 	}
 	return nil
+}
+
+// syncLaptopToParallelsHost rsyncs src (a laptop-side path) to a stable cache
+// directory on the remote Parallels host and returns the absolute remote
+// path. The remote cache is shaped per instance so concurrent mounts don't
+// collide:
+//
+//	~/.vmlab/cache/<instance>/<mount>/
+//
+// Requires `rsync` on the laptop and SSH key-based access to parallels.host.
+func (p *Provider) syncLaptopToParallelsHost(ctx context.Context, i provider.Instance, mountName, src string) (string, error) {
+	remoteHost := i.SettingString("parallels", "host")
+	if remoteHost == "" {
+		return src, nil
+	}
+	dest := remoteHost
+	if user := i.SettingString("parallels", "user"); user != "" {
+		dest = user + "@" + remoteHost
+	}
+	remoteCache := path.Join("~/.vmlab/cache", sanitizeShareName(i.Name), sanitizeShareName(mountName))
+
+	// Ensure src exists locally — fail fast with a clear message.
+	if _, err := os.Stat(src); err != nil {
+		return "", fmt.Errorf("local path: %w", err)
+	}
+
+	// Pre-create the remote cache dir. -p ignores existing.
+	sshArgs := []string{"-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "RequestTTY=no"}
+	if port := i.SettingString("parallels", "port"); port != "" {
+		sshArgs = append(sshArgs, "-p", port)
+	}
+	mkArgs := append([]string(nil), sshArgs...)
+	mkArgs = append(mkArgs, dest, "mkdir", "-p", remoteCache)
+	if err := exec.CommandContext(ctx, "ssh", mkArgs...).Run(); err != nil {
+		return "", fmt.Errorf("ssh mkdir %s: %w", remoteCache, err)
+	}
+
+	// rsync. Trailing slash on src copies contents (not the dir itself).
+	rshParts := []string{"ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"}
+	if port := i.SettingString("parallels", "port"); port != "" {
+		rshParts = append(rshParts, "-p", port)
+	}
+	srcArg := src
+	if !strings.HasSuffix(srcArg, "/") {
+		srcArg += "/"
+	}
+	rsyncArgs := []string{"-az", "--delete", "--info=stats1",
+		"-e", strings.Join(rshParts, " "),
+		srcArg, fmt.Sprintf("%s:%s/", dest, remoteCache),
+	}
+	if err := exec.CommandContext(ctx, "rsync", rsyncArgs...).Run(); err != nil {
+		return "", fmt.Errorf("rsync %s -> %s:%s: %w", src, remoteHost, remoteCache, err)
+	}
+
+	// Expand ~ on the remote side: ask the remote what HOME is. prlctl rejects
+	// paths starting with ~, so we need an absolute path.
+	homeArgs := append([]string(nil), sshArgs...)
+	homeArgs = append(homeArgs, dest, "printf", "%s", "$HOME")
+	homeOut, err := exec.CommandContext(ctx, "ssh", homeArgs...).Output()
+	if err != nil {
+		return "", fmt.Errorf("ssh $HOME: %w", err)
+	}
+	home := strings.TrimSpace(string(homeOut))
+	if home == "" {
+		return "", fmt.Errorf("ssh $HOME returned empty")
+	}
+	return strings.Replace(remoteCache, "~", home, 1), nil
 }
 
 func expandHome(path string) string {
