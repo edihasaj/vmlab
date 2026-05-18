@@ -5,6 +5,7 @@ package all
 
 import (
 	"github.com/edihasaj/vmlab/internal/provider"
+	"github.com/edihasaj/vmlab/internal/provider/azure"
 	"github.com/edihasaj/vmlab/internal/provider/hetzner"
 	"github.com/edihasaj/vmlab/internal/provider/parallels"
 )
@@ -12,4 +13,5 @@ import (
 func init() {
 	provider.SideEffectRegister(parallels.New())
 	provider.SideEffectRegister(hetzner.New())
+	provider.SideEffectRegister(azure.New())
 }
