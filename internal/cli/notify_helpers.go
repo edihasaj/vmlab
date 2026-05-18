@@ -76,6 +76,26 @@ func (h *notifyHandle) Finish(upMs, runMs, downMs int64, exit int, runErr error)
 	h.multi.Notify(ctx, h.event(phase, upMs, runMs, downMs, exit, runErr))
 }
 
+// FinishWithStderr is like Finish but accepts a pre-composed stderr tail —
+// used by the fleet runner to summarise which instances failed instead of
+// reading one per-target log file.
+func (h *notifyHandle) FinishWithStderr(upMs, runMs, downMs int64, exit int, runErr error, stderrTail string) {
+	if h.multi == nil {
+		return
+	}
+	phase := notify.PhaseSuccess
+	if runErr != nil || exit != 0 {
+		phase = notify.PhaseFailure
+	}
+	ev := h.event(phase, upMs, runMs, downMs, exit, runErr)
+	if stderrTail != "" {
+		ev.StderrTail = stderrTail
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	h.multi.Notify(ctx, ev)
+}
+
 func (h *notifyHandle) event(phase notify.Phase, upMs, runMs, downMs int64, exit int, runErr error) notify.Event {
 	ev := notify.Event{
 		Phase:    phase,

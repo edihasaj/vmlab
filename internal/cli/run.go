@@ -33,11 +33,20 @@ func newRunCmd() *cobra.Command {
 		Short: "Run a flow or shell command against one or more targets",
 		Long: `Run a flow YAML or arbitrary shell command across the targets matched by <selector>.
 
+Selector forms:
+  <name>           — a transport target
+  @<tag>           — every transport target with that tag
+  @<instance>      — single configured instance (lifecycle-wrapped)
+  @@<tag>          — every configured instance with that tag (parallel fan-out)
+  all              — every transport target
+
 Examples:
   vmlab run ubuntu-local -- uname -a
   vmlab run @linux flows/install.yaml
-  vmlab run all -- ./scripts/smoke.sh
-  vmlab run @linux,not:@ci flows/install.yaml --max-parallel 4`,
+  vmlab run @win11-studio -- cmd.exe /c ver        # single instance, lifecycle
+  vmlab run @@linux flows/smoke.yaml               # fan out across all linux instances
+  vmlab run @@mobile flows/test.yaml --max-parallel 2 --fail-fast
+  vmlab run all -- ./scripts/smoke.sh`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, p, err := config.Load()
@@ -58,6 +67,11 @@ Examples:
 			// instance matches; instance wins on exact `@<name>` collision.
 			if name, ok := instanceShortcut(selectorArg, p); ok {
 				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify, retries)
+			}
+			if insts, ok := instanceClassShortcut(selectorArg, p); ok {
+				return runInstanceFleet(cmd, p, selectorArg, insts, rest,
+					dryRun, asJSON, noEvidence, noNotify,
+					maxParallel, failFast, continueOnError, retries)
 			}
 
 			r, err := target.Load(p)
