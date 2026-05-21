@@ -57,14 +57,24 @@ type Step struct {
 // vmlab caches the output by (src content + build cmd + os/arch) so a one-
 // line source change only rebuilds the OS that was actually touched.
 //
-//   - src   — file or directory whose recursive content hash gates the
-//     cache. Hidden files (".git" etc.) skipped, matching the watch loop.
-//   - build — map of os-kind → shell command. The picked command runs on
-//     the *host* (not the target), so a Mac host can cross-compile a
-//     Linux/Windows binary without booting the VM.
+//   - src        — file or directory whose recursive content hash gates
+//     the cache. Hidden files (".git" etc.) skipped, matching the watch
+//     loop.
+//   - build      — map of os-kind → shell command. The picked command
+//     runs on the *host* (not the target), so a Mac host can
+//     cross-compile a Linux/Windows binary without booting the VM.
+//   - output     — host path the build is expected to drop a binary at,
+//     keyed by os-kind. Required if delivery is on.
+//   - deliver_to — path inside the target to deliver the picked
+//     output[osKind] to. Empty = build-only (the user wires delivery
+//     separately, e.g. via a follow-on `run:` with scp). When set,
+//     vmlab calls the target's transport Sync after a successful build
+//     (or cache hit) so the binary lands in the VM in one step.
 type ArtifactSpec struct {
-	Src   string            `yaml:"src,omitempty"`
-	Build map[string]string `yaml:"build,omitempty"`
+	Src       string            `yaml:"src,omitempty"`
+	Build     map[string]string `yaml:"build,omitempty"`
+	Output    map[string]string `yaml:"output,omitempty"`
+	DeliverTo string            `yaml:"deliver_to,omitempty"`
 }
 
 // Flow is a sequence of steps.
@@ -152,7 +162,7 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 		// repeat tick with the same source content is a microsecond stat.
 		if s.Artifact != nil {
 			start := time.Now()
-			cmdLine, cached, err := runArtifactStep(ctx, s.Artifact, osKind, arch, artifactCacheDir(), stdout, stderr)
+			cmdLine, cached, err := runArtifactStep(ctx, s.Artifact, osKind, arch, artifactCacheDir(), tr, t, stdout, stderr)
 			dur := time.Since(start)
 			if err != nil {
 				results = append(results, StepResult{Index: i, Kind: "artifact", Cmd: cmdLine, Name: s.Name, ExitCode: 1, DurationMs: dur.Milliseconds(), Error: err.Error()})

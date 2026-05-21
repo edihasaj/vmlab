@@ -3,12 +3,47 @@ package flow
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/edihasaj/vmlab/internal/target"
+	"github.com/edihasaj/vmlab/internal/transport"
 )
+
+// fakeTransport records Sync calls so tests can assert on delivery.
+type fakeTransport struct {
+	syncs []struct {
+		Target target.Target
+		Src    string
+	}
+}
+
+func (f *fakeTransport) Name() string             { return "fake" }
+func (f *fakeTransport) Capabilities() transport.Caps { return transport.Caps{Sync: true} }
+func (f *fakeTransport) Doctor(context.Context, target.Target) transport.Health {
+	return transport.Health{OK: true}
+}
+func (f *fakeTransport) Sync(_ context.Context, t target.Target, src string) error {
+	f.syncs = append(f.syncs, struct {
+		Target target.Target
+		Src    string
+	}{t, src})
+	return nil
+}
+func (f *fakeTransport) Run(context.Context, target.Target, []string, io.Writer, io.Writer) (transport.Result, error) {
+	return transport.Result{}, nil
+}
+func (f *fakeTransport) Shell(context.Context, target.Target) error { return nil }
+func (f *fakeTransport) Screenshot(context.Context, target.Target, string) error {
+	return nil
+}
+func (f *fakeTransport) GUI(context.Context, target.Target, transport.GUIAction) error {
+	return nil
+}
 
 func TestHashSourceTreeStableAndChangeSensitive(t *testing.T) {
 	dir := t.TempDir()
@@ -83,7 +118,7 @@ func TestRunArtifactStepCachesAcrossCalls(t *testing.T) {
 
 	// First call: cache miss, build runs.
 	var out, errb bytes.Buffer
-	_, cached, err := runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, &out, &errb)
+	_, cached, err := runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, nil, target.Target{}, &out, &errb)
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -98,7 +133,7 @@ func TestRunArtifactStepCachesAcrossCalls(t *testing.T) {
 	// Second call (same inputs): cache hit, build does NOT run again.
 	out.Reset()
 	errb.Reset()
-	_, cached, err = runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, &out, &errb)
+	_, cached, err = runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, nil, target.Target{}, &out, &errb)
 	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
@@ -115,7 +150,7 @@ func TestRunArtifactStepCachesAcrossCalls(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(srcDir, "main.go"), future, future); err != nil {
 		t.Fatal(err)
 	}
-	_, cached, err = runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, &out, &errb)
+	_, cached, err = runArtifactStep(context.Background(), spec, "linux", "amd64", cacheDir, nil, target.Target{}, &out, &errb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +163,7 @@ func TestRunArtifactStepUnknownOSReturnsMissingEntry(t *testing.T) {
 	spec := &ArtifactSpec{
 		Build: map[string]string{"linux": "true"},
 	}
-	cmd, cached, err := runArtifactStep(context.Background(), spec, "windows", "amd64", "", &bytes.Buffer{}, &bytes.Buffer{})
+	cmd, cached, err := runArtifactStep(context.Background(), spec, "windows", "amd64", "", nil, target.Target{}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,5 +172,110 @@ func TestRunArtifactStepUnknownOSReturnsMissingEntry(t *testing.T) {
 	}
 	if cached {
 		t.Errorf("unknown OS should not be a cache hit")
+	}
+}
+
+func TestRunArtifactStepDeliversOutputToTarget(t *testing.T) {
+	if runtimeIsWindowsHost() {
+		t.Skip("test assumes POSIX host")
+	}
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	outPath := filepath.Join(outDir, "myapp-linux")
+
+	spec := &ArtifactSpec{
+		Src: srcDir,
+		Build: map[string]string{
+			"linux": "printf binary > " + outPath,
+		},
+		Output: map[string]string{
+			"linux": outPath,
+		},
+		DeliverTo: "/opt/myapp/",
+	}
+
+	ft := &fakeTransport{}
+	tgt := target.Target{
+		Name:      "linux-vm",
+		Transport: "ssh",
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "vm.lan", "user": "edi"},
+		},
+	}
+
+	cmd, cached, err := runArtifactStep(context.Background(), spec, "linux", "amd64", "", ft, tgt, &bytes.Buffer{}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("step failed: %v", err)
+	}
+	if cached {
+		t.Fatal("first call should be a miss")
+	}
+	if cmd == "" {
+		t.Fatal("expected non-empty build cmd")
+	}
+
+	if len(ft.syncs) != 1 {
+		t.Fatalf("expected exactly one Sync call, got %d", len(ft.syncs))
+	}
+	got := ft.syncs[0]
+	if got.Src != outPath {
+		t.Errorf("Sync src = %q, want %q", got.Src, outPath)
+	}
+	dest := got.Target.SettingString("ssh", "dest")
+	if dest != "/opt/myapp/" {
+		t.Errorf("delivered target ssh.dest = %q, want %q", dest, "/opt/myapp/")
+	}
+	// Original target must remain unmutated.
+	if tgt.SettingString("ssh", "dest") != "" {
+		t.Errorf("original target was mutated: ssh.dest=%q", tgt.SettingString("ssh", "dest"))
+	}
+}
+
+func TestRunArtifactStepNoDeliveryWhenDeliverToEmpty(t *testing.T) {
+	if runtimeIsWindowsHost() {
+		t.Skip("test assumes POSIX host")
+	}
+	srcDir := t.TempDir()
+	outPath := filepath.Join(t.TempDir(), "marker")
+	spec := &ArtifactSpec{
+		Src: srcDir,
+		Build: map[string]string{
+			"linux": "printf x > " + outPath,
+		},
+		Output: map[string]string{"linux": outPath},
+		// DeliverTo intentionally empty
+	}
+	ft := &fakeTransport{}
+	tgt := target.Target{Name: "x", Transport: "ssh"}
+	if _, _, err := runArtifactStep(context.Background(), spec, "linux", "amd64", "", ft, tgt, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ft.syncs) != 0 {
+		t.Errorf("expected zero syncs when DeliverTo is empty, got %d", len(ft.syncs))
+	}
+}
+
+func TestRunArtifactStepMissingOutputFails(t *testing.T) {
+	if runtimeIsWindowsHost() {
+		t.Skip("test assumes POSIX host")
+	}
+	srcDir := t.TempDir()
+	spec := &ArtifactSpec{
+		Src:       srcDir,
+		Build:     map[string]string{"linux": "true"},                                     // succeeds but produces nothing
+		Output:    map[string]string{"linux": filepath.Join(t.TempDir(), "never-built")}, // path doesn't exist
+		DeliverTo: "/opt/x/",
+	}
+	ft := &fakeTransport{}
+	tgt := target.Target{Name: "x", Transport: "ssh"}
+	_, _, err := runArtifactStep(context.Background(), spec, "linux", "amd64", "", ft, tgt, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected an error when output is missing")
+	}
+	if !strings.Contains(err.Error(), "missing after build") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }

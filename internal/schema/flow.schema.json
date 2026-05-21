@@ -50,7 +50,20 @@
                   "ios":     { "type": "string" },
                   "android": { "type": "string" }
                 }
-              }
+              },
+              "output": {
+                "type": "object",
+                "additionalProperties": { "type": "string", "minLength": 1 },
+                "properties": {
+                  "mac":     { "type": "string" },
+                  "darwin":  { "type": "string" },
+                  "linux":   { "type": "string" },
+                  "windows": { "type": "string" },
+                  "ios":     { "type": "string" },
+                  "android": { "type": "string" }
+                }
+              },
+              "deliver_to": { "type": "string" }
             }
           }
         },

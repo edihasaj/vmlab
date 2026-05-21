@@ -14,6 +14,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/edihasaj/vmlab/internal/target"
+	"github.com/edihasaj/vmlab/internal/transport"
 )
 
 // runArtifactStep executes one `artifact:` step on the host. Returns the
@@ -22,10 +25,15 @@ import (
 //
 // Cache key includes: src content fingerprint + build cmd + osKind +
 // arch. A hit means we've already built this exact input on this host;
-// the actual artifact lives wherever the build command put it, which
-// vmlab does not track (the user's build command is responsible for its
-// own output paths).
-func runArtifactStep(ctx context.Context, spec *ArtifactSpec, osKind, arch, cacheDir string, stdout, stderr io.Writer) (string, bool, error) {
+// the build script is skipped but delivery still happens so a fresh VM
+// gets the binary even on a cache hit.
+//
+// When spec.Output[osKind] and spec.DeliverTo are both set, the picked
+// output file is pushed into the target via tr.Sync after a successful
+// build (cached or fresh). For ssh / ssh-windows transports, DeliverTo
+// is wired into the target's ssh.dest setting on a cloned target so the
+// original config stays untouched.
+func runArtifactStep(ctx context.Context, spec *ArtifactSpec, osKind, arch, cacheDir string, tr transport.Transport, tgt target.Target, stdout, stderr io.Writer) (string, bool, error) {
 	cmdLine, ok := pickInstall(spec.Build, osKind) // same alias logic as install dispatch
 	if !ok {
 		return "", false, nil
@@ -37,31 +45,97 @@ func runArtifactStep(ctx context.Context, spec *ArtifactSpec, osKind, arch, cach
 	}
 	key := artifactCacheKey(srcHash, cmdLine, osKind, arch)
 
+	cached := false
 	if cacheDir != "" {
 		hit, herr := cacheHit(cacheDir, key)
 		if herr == nil && hit {
 			fmt.Fprintf(stderr, "artifact: cache hit (%s) — skipping build\n", short12(key))
-			return cmdLine, true, nil
+			cached = true
 		}
 	}
 
-	// Pick a host-side shell. We deliberately stay agnostic about the user's
-	// build toolchain — they own quoting / env / cd inside the command.
-	hostShell := []string{"sh", "-lc", cmdLine}
-	if runtimeIsWindowsHost() {
-		hostShell = []string{"powershell", "-NoProfile", "-Command", cmdLine}
-	}
-	c := exec.CommandContext(ctx, hostShell[0], hostShell[1:]...)
-	c.Stdout = stdout
-	c.Stderr = stderr
-	if err := c.Run(); err != nil {
-		return cmdLine, false, err
+	if !cached {
+		// Pick a host-side shell. We stay agnostic about the user's build
+		// toolchain — they own quoting / env / cd inside the command.
+		hostShell := []string{"sh", "-lc", cmdLine}
+		if runtimeIsWindowsHost() {
+			hostShell = []string{"powershell", "-NoProfile", "-Command", cmdLine}
+		}
+		c := exec.CommandContext(ctx, hostShell[0], hostShell[1:]...)
+		c.Stdout = stdout
+		c.Stderr = stderr
+		if err := c.Run(); err != nil {
+			return cmdLine, false, err
+		}
+		if cacheDir != "" {
+			_ = writeCacheEntry(cacheDir, key, srcHash, cmdLine, osKind, arch)
+		}
 	}
 
-	if cacheDir != "" {
-		_ = writeCacheEntry(cacheDir, key, srcHash, cmdLine, osKind, arch)
+	if err := deliverArtifact(ctx, spec, osKind, tr, tgt, stderr); err != nil {
+		return cmdLine, cached, err
 	}
-	return cmdLine, false, nil
+	return cmdLine, cached, nil
+}
+
+// deliverArtifact pushes the build output into the target via tr.Sync when
+// both an output path and a deliver_to path are configured. No-op when
+// either is empty so build-only flows stay supported.
+//
+// For ssh / ssh-windows the deliver_to value is wired into a cloned
+// target's ssh.dest setting. For other transports we fall back to plain
+// Sync (parallels-guest uses shared folders, so users on that path should
+// keep using mounts / vmlab sync rather than artifact deliver_to).
+func deliverArtifact(ctx context.Context, spec *ArtifactSpec, osKind string, tr transport.Transport, tgt target.Target, stderr io.Writer) error {
+	if spec.DeliverTo == "" {
+		return nil
+	}
+	out, ok := pickInstall(spec.Output, osKind)
+	if !ok || out == "" {
+		// No output mapped for this OS → silently skip; users describe a
+		// subset of OSes that get a build+deliver via `output:` and the
+		// rest are run/exec-only steps.
+		return nil
+	}
+	if tr == nil {
+		return fmt.Errorf("artifact deliver_to: no transport available (artifact step must run inside a real run, not a dry-run)")
+	}
+	if _, err := os.Stat(out); err != nil {
+		return fmt.Errorf("artifact output %q missing after build: %w", out, err)
+	}
+	delivered := tgt
+	delivered.Settings = cloneSettingsWithDest(tgt.Settings, tgt.Transport, spec.DeliverTo)
+	fmt.Fprintf(stderr, "artifact: deliver %s → %s:%s\n", out, tgt.Name, spec.DeliverTo)
+	return tr.Sync(ctx, delivered, out)
+}
+
+// cloneSettingsWithDest deep-copies the target settings map and sets the
+// transport-appropriate dest path. We mutate only the namespace the
+// transport reads from so unrelated settings (timeouts, keys, etc.) keep
+// flowing through unchanged.
+func cloneSettingsWithDest(src map[string]any, transportName, dest string) map[string]any {
+	out := make(map[string]any, len(src)+1)
+	for k, v := range src {
+		if m, ok := v.(map[string]any); ok {
+			cp := make(map[string]any, len(m))
+			for kk, vv := range m {
+				cp[kk] = vv
+			}
+			out[k] = cp
+		} else {
+			out[k] = v
+		}
+	}
+	// ssh + ssh-windows both consume ssh.dest.
+	if transportName == "ssh" || transportName == "ssh-windows" {
+		sshMap, _ := out["ssh"].(map[string]any)
+		if sshMap == nil {
+			sshMap = map[string]any{}
+		}
+		sshMap["dest"] = dest
+		out["ssh"] = sshMap
+	}
+	return out
 }
 
 // hashSourceTree mirrors the watch hash but kept in the flow package so we

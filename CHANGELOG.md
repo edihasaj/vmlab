@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M5+ — artifact auto-delivery, closes the build→ship loop)
+
+- `artifact:` step gained `output:` (host path per OS where the build
+  drops its binary) and `deliver_to:` (path inside the target). When
+  both are set, vmlab pushes the picked output file through the target's
+  transport (rsync over ssh / ssh-windows) immediately after a
+  successful build — including on a cache hit, so a fresh VM still gets
+  the artifact. No more hand-rolled `scp` follow-on step. The original
+  target's settings are never mutated; delivery uses a per-call clone
+  with `ssh.dest` set to `deliver_to`.
+- Tests: delivery target carries the right `ssh.dest`, the original
+  target stays clean, missing build output produces a clear error, and
+  empty `deliver_to` keeps the step pure-build (no syncs).
+
 ### Added (M6 — agent ergonomics + north-star command)
 
 - `vmlab matrix run <selector> <flow-or-cmd>` — the north-star CLI surface.

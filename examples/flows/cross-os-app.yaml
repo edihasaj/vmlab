@@ -3,17 +3,27 @@ name: cross-os-app
 # to the right package manager so you don't fork the YAML per OS;
 # `artifact:` builds the right binary on the host and caches by input hash.
 steps:
-  # Host-side build. The picked entry runs locally — a Mac host can
-  # cross-compile a Linux/Windows binary without booting the target VM.
-  # Cached by sha256(./cmd/myapp content + build cmd + os + arch) so a
+  # Host-side build + auto-delivery. The picked build entry runs locally
+  # — a Mac host can cross-compile a Linux/Windows binary without booting
+  # the target VM. Cached by sha256(src + build cmd + os + arch) so a
   # one-line source change only rebuilds the OS that was actually touched.
-  - name: build
+  #
+  # `output:` tells vmlab where the build dropped the binary on the host.
+  # `deliver_to:` is the path inside the target — after a successful
+  # build (or cache hit) vmlab pushes the file through the target's
+  # transport (rsync over ssh / ssh-windows).
+  - name: build-and-ship
     artifact:
       src: ./cmd/myapp
       build:
         darwin:  go build -o ./build/myapp-darwin ./cmd/myapp
         linux:   GOOS=linux  GOARCH=amd64 go build -o ./build/myapp-linux ./cmd/myapp
         windows: GOOS=windows GOARCH=amd64 go build -o ./build/myapp-windows.exe ./cmd/myapp
+      output:
+        darwin:  ./build/myapp-darwin
+        linux:   ./build/myapp-linux
+        windows: ./build/myapp-windows.exe
+      deliver_to: /opt/myapp/
 
   - name: detect-os
     when: os=linux
