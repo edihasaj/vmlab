@@ -1,0 +1,19 @@
+name: win11-lab
+transport: ssh-windows
+tags: [windows, lab]
+capabilities:
+  shell: true
+  sync: true
+  install: true
+ssh:
+  host: win11.lan
+  user: edi
+  identity: ~/.ssh/id_ed25519
+  # Windows-side shell. Default `pwsh` ships commands via -EncodedCommand
+  # (UTF-16LE base64) to sidestep cmd.exe + PowerShell layered quoting.
+  # Use `powershell` for Windows PowerShell 5.1, `cmd` for cmd.exe, or
+  # `none` to pass the joined argv through verbatim.
+  shell: pwsh
+  # Where `vmlab run @win11-lab -- ...` sync targets land. Leave unset to
+  # use the OpenSSH default (the user's home, e.g. C:\Users\edi\).
+  # dest: C:\vmlab\drop

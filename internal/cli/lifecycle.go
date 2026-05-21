@@ -106,10 +106,11 @@ func newDownCmd() *cobra.Command {
 
 func newWithCmd() *cobra.Command {
 	var (
-		dispose    string
-		timeout    time.Duration
-		noEvidence bool
-		noNotify   bool
+		dispose      string
+		timeout      time.Duration
+		noEvidence   bool
+		noNotify     bool
+		fromSnapshot string
 	)
 	c := &cobra.Command{
 		Use:   "with <instance> -- <cmd>...",
@@ -159,6 +160,14 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 
 			// pre_up hooks (no transport yet)
 			if err := runLifecycleHooks(cmd, run, hooks.PhasePreUp, instance.Hooks.PreUp, nil, target.Target{}); err != nil {
+				finishLifecycle(run, instance, provider.EnsureResult{}, "", 0, 0, 0, err)
+				nfy.Finish(0, 0, 0, 1, err)
+				return err
+			}
+
+			// optional snapshot restore — must happen before Up so the next
+			// boot comes off the clean baseline.
+			if err := restoreSnapshotIfRequested(cmd.Context(), pr, instance, fromSnapshot); err != nil {
 				finishLifecycle(run, instance, provider.EnsureResult{}, "", 0, 0, 0, err)
 				nfy.Finish(0, 0, 0, 1, err)
 				return err
@@ -264,6 +273,7 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 	c.Flags().DurationVar(&timeout, "timeout", 30*time.Minute, "max time for the inner command")
 	c.Flags().BoolVar(&noEvidence, "no-evidence", false, "skip writing an evidence bundle")
 	c.Flags().BoolVar(&noNotify, "no-notify", false, "skip configured notifiers (Discord etc.)")
+	c.Flags().StringVar(&fromSnapshot, "from-snapshot", "", "restore named snapshot before Up (provider must support snapshots)")
 	return c
 }
 
@@ -394,5 +404,24 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// restoreSnapshotIfRequested runs Restore on the provider before Up so the
+// next vmlab cycle starts from a known-clean baseline. Empty `name` is a
+// no-op so callers can wire the flag unconditionally. Surface a useful
+// error when the provider doesn't implement Snapshotter rather than
+// silently skipping — the user asked for a clean state and we promised it.
+func restoreSnapshotIfRequested(ctx context.Context, pr provider.Provider, inst provider.Instance, name string) error {
+	if name == "" {
+		return nil
+	}
+	snap, ok := pr.(provider.Snapshotter)
+	if !ok {
+		return fmt.Errorf("--from-snapshot: provider %q does not support snapshots", pr.Name())
+	}
+	if err := snap.Restore(ctx, inst, name); err != nil {
+		return fmt.Errorf("--from-snapshot=%s: %w", name, err)
+	}
+	return nil
 }
 

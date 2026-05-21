@@ -13,6 +13,7 @@ import (
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/flow"
 	"github.com/edihasaj/vmlab/internal/hooks"
+	"github.com/edihasaj/vmlab/internal/notify"
 	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
@@ -44,7 +45,7 @@ func instanceShortcut(selectorArg string, p config.Paths) (string, bool) {
 // instance up, runs the flow or command against the emitted target, then
 // disposes per the instance's disposition. Always single-target — to fan
 // out across instances use a target tag instead.
-func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence, noNotify bool, retries int) error {
+func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []string, dryRun, asJSON, noEvidence, noNotify bool, retries int, fromSnapshot, format string) error {
 	pr, inst, err := resolveInstance(name)
 	if err != nil {
 		return err
@@ -55,6 +56,11 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 			return err
 		}
 		defer lock.Release()
+	}
+	if !dryRun {
+		if err := restoreSnapshotIfRequested(cmd.Context(), pr, inst, fromSnapshot); err != nil {
+			return err
+		}
 	}
 
 	var loadedFlow *flow.Flow
@@ -96,7 +102,11 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 		_ = run.MarkRunning()
 	}
 	nfy := loadNotifier(cmd, paths, noNotify, inst, "@"+inst.Name, cmdline, run)
-	nfy.Start()
+	// Matrix mode suppresses per-phase chatter — the user wants ONE compact
+	// summary at the end, not Start + Finish.
+	if !isMatrixFormat(format) {
+		nfy.Start()
+	}
 
 	if err := runLifecycleHooks(cmd, run, hooks.PhasePreUp, inst.Hooks.PreUp, nil, target.Target{}); err != nil {
 		finishLifecycle(run, inst, provider.EnsureResult{}, "", 0, 0, 0, err)
@@ -233,9 +243,44 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 		fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s) up=%dms run=%dms down=%dms\n",
 			meta.ID, run.Dir, upMs, runMs, downMs)
 	}
-	nfy.Finish(upMs, runMs, downMs, exit, runErr)
+	if isMatrixFormat(format) {
+		summaryStatus := "pass"
+		anyFail := exit != 0 || runErr != nil
+		if anyFail {
+			summaryStatus = "fail"
+		}
+		nfy.FinishMatrix([]notify.MatrixSummaryRow{{
+			Target:     inst.Name,
+			Provider:   inst.Provider,
+			Status:     summaryStatus,
+			ExitCode:   exit,
+			DurationMs: runMs,
+			Error:      errString(runErr),
+		}}, runMs, anyFail, runErr)
+	} else {
+		nfy.Finish(upMs, runMs, downMs, exit, runErr)
+	}
 
-	if asJSON {
+	if isMatrixFormat(format) {
+		row := MatrixRow{
+			Target:     inst.Name,
+			Transport:  tgt.Transport,
+			Provider:   inst.Provider,
+			Status:     "pass",
+			ExitCode:   exit,
+			DurationMs: runMs,
+		}
+		if exit != 0 || runErr != nil {
+			row.Status = "fail"
+			if runErr != nil {
+				row.Error = runErr.Error()
+			}
+			if run != nil {
+				row.Tail = tailStderr(run.Dir, inst.Name)
+			}
+		}
+		_ = emitMatrix(cmd.OutOrStdout(), []MatrixRow{row})
+	} else if asJSON {
 		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 			"instance": inst.Name,
 			"provider": inst.Provider,

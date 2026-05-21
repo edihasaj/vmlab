@@ -35,9 +35,13 @@ func newImageBuildCmd() *cobra.Command {
 		keep        bool
 	)
 	c := &cobra.Command{
-		Use:   "build @<instance> <flow.yaml>",
+		Use:   "build @<instance|@<tag>> <flow.yaml>",
 		Short: "Bring up an instance, run a flow, snapshot the result, then destroy",
-		Long: `Bakes a provider snapshot/image from the supplied flow. Sequence:
+		Long: `Bakes a provider snapshot/image from the supplied flow.
+
+Single-instance form:
+
+  vmlab image build @<instance> <flow.yaml> --name <image-name>
 
   1. Up @<instance>      (creates a fresh VM — flow expects a clean slate)
   2. post_up hooks
@@ -45,9 +49,16 @@ func newImageBuildCmd() *cobra.Command {
   4. Provider.Snapshot(--name)
   5. Down @<instance>    (destroy by default; --keep to leave running)
 
-The named snapshot is then available for future Up calls. For Hetzner the
-snapshot is recorded as an image tagged vmlab-image=<name>; for Parallels
-it's a named PRL snapshot.`,
+Matrix form (one image per OS, same flow, same image name on each
+provider's snapshot namespace):
+
+  vmlab image build @@<tag> <flow.yaml> --name <image-name>
+
+  Resolves @@<tag> to every configured instance carrying <tag> and bakes
+  one image per instance, reusing the supplied --name on each provider.
+  Bakes are serial (parallel image bakes are dangerous — each one churns
+  enormous state). On first failure the loop stops and reports which
+  instances baked successfully.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			instArg := args[0]
@@ -56,17 +67,7 @@ it's a named PRL snapshot.`,
 				return fmt.Errorf("--name <image-name> is required")
 			}
 			if !strings.HasPrefix(instArg, "@") {
-				return fmt.Errorf("first arg must be @<instance>")
-			}
-			instName := strings.TrimPrefix(instArg, "@")
-
-			pr, inst, err := resolveInstance(instName)
-			if err != nil {
-				return err
-			}
-			sn, ok := pr.(provider.Snapshotter)
-			if !ok {
-				return fmt.Errorf("provider %q does not implement snapshots", inst.Provider)
+				return fmt.Errorf("first arg must be @<instance> or @@<tag>")
 			}
 
 			_, paths, err := config.Load()
@@ -76,106 +77,182 @@ it's a named PRL snapshot.`,
 			if err := config.EnsureDirs(paths); err != nil {
 				return err
 			}
-			lock, err := acquireInstanceLockAt(cmd, paths, inst.Name)
-			if err != nil {
-				return err
-			}
-			defer lock.Release()
 
 			f, err := flow.Load(flowPath)
 			if err != nil {
 				return err
 			}
 
-			run, err := evidence.New(paths.RunsDir)
+			// Matrix form: @@<tag> fans out to every matching instance.
+			if insts, ok := instanceClassShortcut(instArg, paths); ok {
+				return runImageBuildMatrix(cmd, paths, insts, f, name, description, keep)
+			}
+
+			instName := strings.TrimPrefix(instArg, "@")
+			pr, inst, err := resolveInstance(instName)
 			if err != nil {
 				return err
 			}
-			run.SetFlow(f.SourceFile)
-			run.SetSelector("@" + inst.Name + " image:" + name)
-			_ = run.MarkRunning()
-
-			nfy := loadNotifier(cmd, paths, false, inst, "image:"+name, f.SourceFile, run)
-			nfy.Start()
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Minute)
-			defer cancel()
-
-			// Up
-			upStart := time.Now()
-			tgt, ensure, upErr := pr.Up(ctx, inst)
-			upMs := time.Since(upStart).Milliseconds()
-			if upErr != nil {
-				nfy.Finish(upMs, 0, 0, 1, upErr)
-				return upErr
+			if _, ok := pr.(provider.Snapshotter); !ok {
+				return fmt.Errorf("provider %q does not implement snapshots", inst.Provider)
 			}
-			tr, err := transport.Default().Get(tgt.Transport)
+
+			lock, err := acquireInstanceLockAt(cmd, paths, inst.Name)
 			if err != nil {
-				_ = pr.Down(context.Background(), inst, provider.DisposeDestroy)
-				nfy.Finish(upMs, 0, 0, 1, err)
 				return err
 			}
-			o, e, l, lerr := run.TargetWriters(inst.Name, cmd.OutOrStdout(), cmd.ErrOrStderr())
-			if lerr != nil {
-				return lerr
-			}
-			defer l.Close()
-			teeOut, teeErr := o, e
+			defer lock.Release()
 
-			// post_up hooks (transport ready)
-			if err := (&hooks.Runner{Transport: tr, Target: tgt, Stdout: teeOut, Stderr: teeErr}).
-				Run(ctx, hooks.PhasePostUp, inst.Hooks.PostUp); err != nil {
-				cleanupImage(ctx, pr, inst, keep, teeErr)
-				nfy.Finish(upMs, 0, 0, 1, err)
-				return err
-			}
-
-			// Run flow
-			runStart := time.Now()
-			steps, runErr := flow.Run(ctx, tr, tgt, f, teeOut, teeErr)
-			runMs := time.Since(runStart).Milliseconds()
-			_, _ = run.WriteSteps(inst.Name, steps)
-			exit := lastExit(steps, runErr)
-
-			if runErr != nil || exit != 0 {
-				cleanupImage(ctx, pr, inst, keep, teeErr)
-				_ = ensure // silence unused
-				nfy.Finish(upMs, runMs, 0, exit, runErr)
-				return fmt.Errorf("flow failed (exit=%d): %w", exit, runErr)
-			}
-
-			// Snapshot
-			fmt.Fprintf(cmd.ErrOrStderr(), "\nbaking image %q via %s.Snapshot…\n", name, inst.Provider)
-			snapStart := time.Now()
-			if err := sn.Snapshot(ctx, inst, name, description); err != nil {
-				cleanupImage(ctx, pr, inst, keep, teeErr)
-				nfy.Finish(upMs, runMs, time.Since(snapStart).Milliseconds(), 1, err)
-				return fmt.Errorf("snapshot %q: %w", name, err)
-			}
-			snapMs := time.Since(snapStart).Milliseconds()
-
-			// Cleanup
-			downStart := time.Now()
-			cleanupImage(ctx, pr, inst, keep, teeErr)
-			downMs := time.Since(downStart).Milliseconds()
-
-			run.AddTarget(evidence.TargetSummary{
-				Name:      inst.Name,
-				Transport: tgt.Transport,
-				ExitCode:  0,
-				Duration:  runMs,
-			})
-			meta, _ := run.Finish(0)
-			fmt.Fprintf(cmd.OutOrStdout(), "\nimage built: %s (provider=%s, run-id=%s)\n  up=%dms run=%dms snap=%dms down=%dms\n",
-				name, inst.Provider, meta.ID, upMs, runMs, snapMs, downMs)
-			nfy.Finish(upMs, runMs+snapMs, downMs, 0, nil)
-			return nil
+			return buildImageForInstance(cmd, paths, pr, inst, f, name, description, keep)
 		},
 	}
 	c.Flags().StringVar(&name, "name", "", "image name (required); used to look up the snapshot later")
 	c.Flags().StringVar(&description, "description", "", "human-readable description stored alongside the image")
 	c.Flags().BoolVar(&keep, "keep", false, "leave the source instance running instead of destroying it after snapshot")
 	return c
+}
+
+// buildImageForInstance is the inner per-instance bake — Up, post_up hooks,
+// run flow, snapshot, Down. Extracted from newImageBuildCmd so the matrix
+// form (one bake per @@<tag> member) can reuse it.
+func buildImageForInstance(cmd *cobra.Command, paths config.Paths, pr provider.Provider, inst provider.Instance, f *flow.Flow, name, description string, keep bool) error {
+	sn, ok := pr.(provider.Snapshotter)
+	if !ok {
+		return fmt.Errorf("provider %q does not implement snapshots", inst.Provider)
+	}
+
+	run, err := evidence.New(paths.RunsDir)
+	if err != nil {
+		return err
+	}
+	run.SetFlow(f.SourceFile)
+	run.SetSelector("@" + inst.Name + " image:" + name)
+	_ = run.MarkRunning()
+
+	nfy := loadNotifier(cmd, paths, false, inst, "image:"+name, f.SourceFile, run)
+	nfy.Start()
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Minute)
+	defer cancel()
+
+	upStart := time.Now()
+	tgt, _, upErr := pr.Up(ctx, inst)
+	upMs := time.Since(upStart).Milliseconds()
+	if upErr != nil {
+		nfy.Finish(upMs, 0, 0, 1, upErr)
+		return upErr
+	}
+	tr, err := transport.Default().Get(tgt.Transport)
+	if err != nil {
+		_ = pr.Down(context.Background(), inst, provider.DisposeDestroy)
+		nfy.Finish(upMs, 0, 0, 1, err)
+		return err
+	}
+	o, e, l, lerr := run.TargetWriters(inst.Name, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	if lerr != nil {
+		return lerr
+	}
+	defer l.Close()
+	teeOut, teeErr := o, e
+
+	if err := (&hooks.Runner{Transport: tr, Target: tgt, Stdout: teeOut, Stderr: teeErr}).
+		Run(ctx, hooks.PhasePostUp, inst.Hooks.PostUp); err != nil {
+		cleanupImage(ctx, pr, inst, keep, teeErr)
+		nfy.Finish(upMs, 0, 0, 1, err)
+		return err
+	}
+
+	runStart := time.Now()
+	steps, runErr := flow.Run(ctx, tr, tgt, f, teeOut, teeErr)
+	runMs := time.Since(runStart).Milliseconds()
+	_, _ = run.WriteSteps(inst.Name, steps)
+	exit := lastExit(steps, runErr)
+	if runErr != nil || exit != 0 {
+		cleanupImage(ctx, pr, inst, keep, teeErr)
+		nfy.Finish(upMs, runMs, 0, exit, runErr)
+		return fmt.Errorf("flow failed (exit=%d): %w", exit, runErr)
+	}
+
+	fmt.Fprintf(cmd.ErrOrStderr(), "\nbaking image %q via %s.Snapshot…\n", name, inst.Provider)
+	snapStart := time.Now()
+	if err := sn.Snapshot(ctx, inst, name, description); err != nil {
+		cleanupImage(ctx, pr, inst, keep, teeErr)
+		nfy.Finish(upMs, runMs, time.Since(snapStart).Milliseconds(), 1, err)
+		return fmt.Errorf("snapshot %q: %w", name, err)
+	}
+	snapMs := time.Since(snapStart).Milliseconds()
+
+	downStart := time.Now()
+	cleanupImage(ctx, pr, inst, keep, teeErr)
+	downMs := time.Since(downStart).Milliseconds()
+
+	run.AddTarget(evidence.TargetSummary{
+		Name:      inst.Name,
+		Transport: tgt.Transport,
+		ExitCode:  0,
+		Duration:  runMs,
+	})
+	meta, _ := run.Finish(0)
+	fmt.Fprintf(cmd.OutOrStdout(), "\nimage built: %s (provider=%s, instance=%s, run-id=%s)\n  up=%dms run=%dms snap=%dms down=%dms\n",
+		name, inst.Provider, inst.Name, meta.ID, upMs, runMs, snapMs, downMs)
+	nfy.Finish(upMs, runMs+snapMs, downMs, 0, nil)
+	return nil
+}
+
+// runImageBuildMatrix bakes the same image name into each member of @@<tag>'s
+// instance set. Serial — image bakes churn provider state hard enough that
+// parallel execution is a footgun on shared hypervisors / cloud quotas. On
+// first failure the loop stops and reports which instances completed.
+func runImageBuildMatrix(cmd *cobra.Command, paths config.Paths, insts []provider.Instance, f *flow.Flow, name, description string, keep bool) error {
+	type result struct {
+		Instance string
+		Provider string
+		Err      error
+	}
+	results := make([]result, 0, len(insts))
+	for _, inst := range insts {
+		pr, err := provider.Default().Get(inst.Provider)
+		if err != nil {
+			results = append(results, result{Instance: inst.Name, Provider: inst.Provider, Err: err})
+			break
+		}
+		if _, ok := pr.(provider.Snapshotter); !ok {
+			err := fmt.Errorf("provider %q does not implement snapshots", inst.Provider)
+			results = append(results, result{Instance: inst.Name, Provider: inst.Provider, Err: err})
+			break
+		}
+		lock, err := acquireInstanceLockAt(cmd, paths, inst.Name)
+		if err != nil {
+			results = append(results, result{Instance: inst.Name, Provider: inst.Provider, Err: err})
+			break
+		}
+		buildErr := buildImageForInstance(cmd, paths, pr, inst, f, name, description, keep)
+		lock.Release()
+		results = append(results, result{Instance: inst.Name, Provider: inst.Provider, Err: buildErr})
+		if buildErr != nil {
+			break
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "\nimage matrix summary (%q):\n", name)
+	var first error
+	for _, r := range results {
+		state := "ok"
+		if r.Err != nil {
+			state = "FAIL: " + r.Err.Error()
+			if first == nil {
+				first = r.Err
+			}
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  - %-24s provider=%-10s %s\n", r.Instance, r.Provider, state)
+	}
+	// Note any instances we never got to.
+	if len(results) < len(insts) {
+		for _, inst := range insts[len(results):] {
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %-24s provider=%-10s SKIPPED (earlier failure)\n", inst.Name, inst.Provider)
+		}
+	}
+	return first
 }
 
 func cleanupImage(ctx context.Context, pr provider.Provider, inst provider.Instance, keep bool, errOut io.Writer) {

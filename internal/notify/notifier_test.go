@@ -87,6 +87,56 @@ func TestDiscordRendersFailureWithMentionAndTail(t *testing.T) {
 	}
 }
 
+func TestDiscordRendersMatrixTable(t *testing.T) {
+	d := NewDiscord("https://example/h", "<@123>")
+	msg := d.render(Event{
+		Phase:    PhaseSuccess,
+		Selector: "@@app-test",
+		RunID:    "20260521T120000-abc",
+		Matrix: []MatrixSummaryRow{
+			{Target: "mac", Provider: "parallels", Status: "pass", ExitCode: 0, DurationMs: 1200},
+			{Target: "linux", Provider: "hetzner", Status: "pass", ExitCode: 0, DurationMs: 1800},
+			{Target: "windows", Provider: "windows", Status: "fail", ExitCode: 7, DurationMs: 900, Error: "smoke"},
+		},
+	})
+	for _, want := range []string{
+		"**matrix**",
+		"@@app-test",
+		"run-id `20260521T120000-abc`",
+		"<@123>",
+		"TARGET",
+		"STATUS",
+		"mac",
+		"linux",
+		"windows",
+		"pass",
+		"fail",
+		"```",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in matrix message:\n%s", want, msg)
+		}
+	}
+}
+
+func TestDiscordMatrixAllPassNoMention(t *testing.T) {
+	d := NewDiscord("https://example/h", "<@123>")
+	msg := d.render(Event{
+		Phase:    PhaseSuccess,
+		Selector: "@@green",
+		Matrix: []MatrixSummaryRow{
+			{Target: "mac", Status: "pass"},
+			{Target: "linux", Status: "skip"},
+		},
+	})
+	if strings.Contains(msg, "<@123>") {
+		t.Errorf("all-pass matrix must not @-mention; got:\n%s", msg)
+	}
+	if !strings.HasPrefix(msg, "✅") {
+		t.Errorf("expected ✅ prefix on all-pass matrix; got:\n%s", msg)
+	}
+}
+
 func TestDiscordPostsAndCounts204AsSuccess(t *testing.T) {
 	fw := newFakeWebhook(t)
 	d := NewDiscord(fw.URL(), "")

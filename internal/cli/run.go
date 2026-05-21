@@ -27,6 +27,8 @@ func newRunCmd() *cobra.Command {
 		noNotify        bool
 		dryRun          bool
 		retries         int
+		fromSnapshot    string
+		format          string
 	)
 	c := &cobra.Command{
 		Use:   "run <selector> <flow-or-cmd>...",
@@ -66,12 +68,15 @@ Examples:
 			// selectors (`@tag`, `<name>`, `all`) keep their meaning when no
 			// instance matches; instance wins on exact `@<name>` collision.
 			if name, ok := instanceShortcut(selectorArg, p); ok {
-				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify, retries)
+				return runInstance(cmd, p, name, rest, dryRun, asJSON, noEvidence, noNotify, retries, fromSnapshot, format)
 			}
 			if insts, ok := instanceClassShortcut(selectorArg, p); ok {
 				return runInstanceFleet(cmd, p, selectorArg, insts, rest,
 					dryRun, asJSON, noEvidence, noNotify,
-					maxParallel, failFast, continueOnError, retries)
+					maxParallel, failFast, continueOnError, retries, fromSnapshot, format)
+			}
+			if fromSnapshot != "" {
+				return fmt.Errorf("--from-snapshot requires @<instance> or @@<tag> selector (got %q)", selectorArg)
 			}
 
 			r, err := target.Load(p)
@@ -172,7 +177,31 @@ Examples:
 				fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s)\n", meta.ID, run.Dir)
 			}
 
-			if asJSON {
+			if isMatrixFormat(format) {
+				rows := make([]MatrixRow, 0, len(outcomes))
+				runDir := ""
+				if run != nil {
+					runDir = run.Dir
+				}
+				for _, o := range outcomes {
+					row := MatrixRow{
+						Target:     o.Target.Name,
+						Transport:  o.Target.Transport,
+						Status:     "pass",
+						ExitCode:   o.ExitCode,
+						DurationMs: o.Duration.Milliseconds(),
+					}
+					if o.ExitCode != 0 || o.Error != nil {
+						row.Status = "fail"
+						if o.Error != nil {
+							row.Error = o.Error.Error()
+						}
+						row.Tail = tailStderr(runDir, o.Target.Name)
+					}
+					rows = append(rows, row)
+				}
+				_ = emitMatrix(cmd.OutOrStdout(), rows)
+			} else if asJSON {
 				type row struct {
 					Target     string `json:"target"`
 					ExitCode   int    `json:"exitCode"`
@@ -210,6 +239,8 @@ Examples:
 	c.Flags().BoolVar(&noNotify, "no-notify", false, "skip configured notifiers (Discord etc.)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan (targets + steps) without executing")
 	c.Flags().IntVar(&retries, "retries", 0, "retry the inner run on failure (only for @<instance>; lifecycle Up/Down run once)")
+	c.Flags().StringVar(&fromSnapshot, "from-snapshot", "", "restore named snapshot before Up (only for @<instance> / @@<tag>; provider must support snapshots)")
+	c.Flags().StringVar(&format, "format", "", "compact output: matrix (newline-delimited JSON, one row per target/instance, stderr tail on failure)")
 	return c
 }
 

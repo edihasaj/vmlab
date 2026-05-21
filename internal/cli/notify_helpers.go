@@ -76,6 +76,31 @@ func (h *notifyHandle) Finish(upMs, runMs, downMs int64, exit int, runErr error)
 	h.multi.Notify(ctx, h.event(phase, upMs, runMs, downMs, exit, runErr))
 }
 
+// FinishMatrix posts a single aggregate event with the matrix rows
+// attached. Notifiers that understand the matrix shape (Discord) render
+// a compact table; others fall back to seeing a normal
+// PhaseSuccess/PhaseFailure event. Use this instead of Start()+Finish()
+// when the caller is emitting --format=matrix on the CLI side — keeps
+// the channel from spamming per-phase chatter that the user already
+// signalled they didn't want.
+func (h *notifyHandle) FinishMatrix(rows []notify.MatrixSummaryRow, runMs int64, anyFailure bool, err error) {
+	if h.multi == nil {
+		return
+	}
+	phase := notify.PhaseSuccess
+	if anyFailure {
+		phase = notify.PhaseFailure
+	}
+	ev := h.event(phase, 0, runMs, 0, 0, err)
+	ev.Matrix = rows
+	if anyFailure {
+		ev.ExitCode = 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	h.multi.Notify(ctx, ev)
+}
+
 // FinishWithStderr is like Finish but accepts a pre-composed stderr tail —
 // used by the fleet runner to summarise which instances failed instead of
 // reading one per-target log file.

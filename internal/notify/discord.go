@@ -83,6 +83,12 @@ func (d *Discord) Notify(ctx context.Context, ev Event) error {
 // render builds the message body. Kept on the type so renderers can be tested
 // without hitting the network.
 func (d *Discord) render(ev Event) string {
+	// Matrix mode short-circuits the per-phase message. The user opted in
+	// to ND-JSON on the CLI and gets one compact table here so the channel
+	// stays readable across @@<tag> fan-outs.
+	if len(ev.Matrix) > 0 {
+		return d.renderMatrix(ev)
+	}
 	var b strings.Builder
 	switch ev.Phase {
 	case PhaseStart:
@@ -128,6 +134,52 @@ func (d *Discord) render(ev Event) string {
 			fmt.Fprintf(&b, "\nstderr tail:\n```\n%s\n```", tail)
 		}
 	}
+	if ev.EvidenceDir != "" {
+		fmt.Fprintf(&b, "\nevidence: `%s`", ev.EvidenceDir)
+	}
+	return b.String()
+}
+
+// renderMatrix builds a compact code-block table summarising every row in
+// ev.Matrix. Header line carries the run-id + selector so the message is
+// self-contained; the table itself is fixed-width text so Discord renders
+// it cleanly in a code block.
+func (d *Discord) renderMatrix(ev Event) string {
+	var b strings.Builder
+	icon := "✅"
+	for _, r := range ev.Matrix {
+		if r.Status != "pass" && r.Status != "skip" {
+			icon = "❌"
+			break
+		}
+	}
+	b.WriteString(icon + " **matrix** ")
+	if ev.Selector != "" {
+		b.WriteString(ev.Selector)
+	}
+	if ev.RunID != "" {
+		fmt.Fprintf(&b, " · run-id `%s`", ev.RunID)
+	}
+	if icon == "❌" && d.MentionOnFailure != "" {
+		b.WriteString(" " + d.MentionOnFailure)
+	}
+	b.WriteString("\n```\n")
+	// Compute column widths so the table stays aligned.
+	tgtW, provW := len("TARGET"), len("PROVIDER")
+	for _, r := range ev.Matrix {
+		if l := len(r.Target); l > tgtW {
+			tgtW = l
+		}
+		if l := len(r.Provider); l > provW {
+			provW = l
+		}
+	}
+	fmt.Fprintf(&b, "%-*s  %-*s  %-6s  %-8s  %s\n", tgtW, "TARGET", provW, "PROVIDER", "STATUS", "EXIT", "DUR")
+	for _, r := range ev.Matrix {
+		dur := fmtDur(r.DurationMs)
+		fmt.Fprintf(&b, "%-*s  %-*s  %-6s  %-8d  %s\n", tgtW, r.Target, provW, r.Provider, r.Status, r.ExitCode, dur)
+	}
+	b.WriteString("```")
 	if ev.EvidenceDir != "" {
 		fmt.Fprintf(&b, "\nevidence: `%s`", ev.EvidenceDir)
 	}

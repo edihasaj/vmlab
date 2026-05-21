@@ -7,7 +7,7 @@
     "name": { "type": "string", "minLength": 1 },
     "transport": {
       "type": "string",
-      "enum": ["local", "crabbox", "abx", "guiport", "adb", "idb", "simctl", "maestro", "parallels-guest", "ssh"]
+      "enum": ["local", "crabbox", "abx", "guiport", "adb", "idb", "simctl", "maestro", "parallels-guest", "ssh", "ssh-windows"]
     },
     "tags": {
       "type": "array",

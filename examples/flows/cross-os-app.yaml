@@ -1,0 +1,43 @@
+name: cross-os-app
+# One flow, all three OSes. `when:` filters per-step; `install:` dispatches
+# to the right package manager so you don't fork the YAML per OS;
+# `artifact:` builds the right binary on the host and caches by input hash.
+steps:
+  # Host-side build. The picked entry runs locally — a Mac host can
+  # cross-compile a Linux/Windows binary without booting the target VM.
+  # Cached by sha256(./cmd/myapp content + build cmd + os + arch) so a
+  # one-line source change only rebuilds the OS that was actually touched.
+  - name: build
+    artifact:
+      src: ./cmd/myapp
+      build:
+        darwin:  go build -o ./build/myapp-darwin ./cmd/myapp
+        linux:   GOOS=linux  GOARCH=amd64 go build -o ./build/myapp-linux ./cmd/myapp
+        windows: GOOS=windows GOARCH=amd64 go build -o ./build/myapp-windows.exe ./cmd/myapp
+
+  - name: detect-os
+    when: os=linux
+    run: |
+      cat /etc/os-release | head -3
+
+  - name: detect-os
+    when: os=darwin
+    run: sw_vers
+
+  - name: detect-os
+    when: os=windows
+    exec: ["cmd.exe", "/c", "ver"]
+
+  - name: install-jq
+    install:
+      darwin:  brew install --quiet jq
+      linux:   sudo apt-get update -qq && sudo apt-get install -y jq
+      windows: choco install -y jq
+
+  - name: smoke
+    run: |
+      echo '{"hello":"world"}' | jq -r .hello
+
+  - name: arch-only-arm64
+    when: arch=arm64
+    run: uname -m

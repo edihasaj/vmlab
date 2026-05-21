@@ -51,6 +51,12 @@ func ParsePhase(s string) (Phase, bool) {
 
 // Event is the payload passed to every Notifier. All fields are optional; the
 // notifier renders what it has.
+//
+// When Matrix is non-empty, the event represents an aggregate run summary
+// rather than a per-phase update. Notifiers that understand the matrix
+// shape (Discord today) render a compact one-table message and skip the
+// usual per-phase chatter; notifiers that don't fall back to the standard
+// fields and just see this as a normal PhaseSuccess/PhaseFailure event.
 type Event struct {
 	Phase       Phase
 	Instance    string
@@ -65,6 +71,19 @@ type Event struct {
 	Err         string
 	StderrTail  string
 	EvidenceDir string
+	Matrix      []MatrixSummaryRow
+}
+
+// MatrixSummaryRow is one row in a matrix-table message. Mirrors the
+// `--format=matrix` CLI output; deliberately lightweight (no stderr tail —
+// failures in the table point readers at the run id / evidence dir).
+type MatrixSummaryRow struct {
+	Target     string
+	Provider   string
+	Status     string // "pass" | "fail" | "skip"
+	ExitCode   int
+	DurationMs int64
+	Error      string
 }
 
 // TotalMs returns the wall-clock duration covered by the lifecycle so far.

@@ -37,6 +37,40 @@ type Target struct {
 	SourceFile string `yaml:"-"`
 }
 
+// OSKind reports the guest OS for `when:` conditionals and `install:`
+// dispatch in flows. Resolution order:
+//
+//  1. explicit top-level `os:` setting on the target / instance YAML
+//     (preferred — users override anything when they know better).
+//  2. transport-derived default: ssh-windows / parallels-guest → windows,
+//     ssh / crabbox → linux, simctl → ios, adb → android, guiport → darwin.
+//  3. "unknown" when nothing else matches; `when:` clauses key off this.
+//
+// Returned values are lowercase, stable, and pluggable into the YAML
+// `install:` map ({mac, darwin, linux, windows, ios, android}).
+func (t Target) OSKind() string {
+	if explicit := strings.ToLower(t.SettingString("os")); explicit != "" {
+		// Normalise the "mac" alias since users write it both ways.
+		if explicit == "mac" || explicit == "macos" || explicit == "osx" {
+			return "darwin"
+		}
+		return explicit
+	}
+	switch t.Transport {
+	case "ssh-windows", "parallels-guest":
+		return "windows"
+	case "ssh", "crabbox", "local":
+		return "linux"
+	case "simctl", "idb":
+		return "ios"
+	case "adb":
+		return "android"
+	case "guiport", "abx":
+		return "darwin"
+	}
+	return "unknown"
+}
+
 // HasTag returns true if the target carries the given tag.
 func (t Target) HasTag(tag string) bool {
 	for _, x := range t.Tags {

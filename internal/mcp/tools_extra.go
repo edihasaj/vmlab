@@ -94,6 +94,16 @@ func registerExtraTools(s *mcpserver.MCPServer, allowWrite bool) {
 				mcpgo.Items(map[string]any{"type": "string"}))),
 		handleOrphansDestroy,
 	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_matrix_run",
+			mcpgo.WithDescription("Run a flow or command against any vmlab selector and return one compact ND-JSON row per target/instance. Failing rows include a 40-line stderr tail. This is the agent-friendly path: ~50× fewer tokens than vmlab_fleet_run for the same scenario."),
+			mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("@<inst> | @@<tag> | <target> | all")),
+			mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
+			mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
+			mcpgo.WithString("fromSnapshot", mcpgo.Description("Restore named snapshot before Up (only for @<inst> / @@<tag>)")),
+			mcpgo.WithNumber("retries", mcpgo.Description("Per-target inner-run retries on failure"))),
+		handleMatrixRun,
+	)
 }
 
 // ---- usage ---------------------------------------------------------------
@@ -344,6 +354,43 @@ func handleNotifyTest(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.Ca
 		return helperError(err.Error()), nil
 	}
 	args := []string{"notify", "test", "--phase", phase}
+	return runSubprocess(ctx, bin, args)
+}
+
+// handleMatrixRun is the agent-friendly entry-point: same lifecycle as
+// fleet_run / instance_run but with --format=matrix so the agent gets
+// ND-JSON rows with capped stderr tails instead of full logs. Works for
+// any vmlab selector (single target, @<inst>, @@<tag>, plain target name,
+// or "all").
+func handleMatrixRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	sel := stringArg(req, "selector", "")
+	if sel == "" {
+		return helperError("selector is required"), nil
+	}
+	flowPath := stringArg(req, "flowPath", "")
+	cmdLine := stringArg(req, "command", "")
+	if (flowPath == "") == (cmdLine == "") {
+		return helperError("provide exactly one of flowPath or command"), nil
+	}
+	fromSnap := stringArg(req, "fromSnapshot", "")
+	retries := intArg(req, "retries", 0)
+
+	bin, err := vmlabExecutable()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	args := []string{"run", sel, "--format=matrix"}
+	if flowPath != "" {
+		args = append(args, flowPath)
+	} else {
+		args = append(args, "--", "sh", "-lc", cmdLine)
+	}
+	if fromSnap != "" {
+		args = append(args, "--from-snapshot", fromSnap)
+	}
+	if retries > 0 {
+		args = append(args, "--retries", strconv.Itoa(retries))
+	}
 	return runSubprocess(ctx, bin, args)
 }
 

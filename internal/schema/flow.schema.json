@@ -13,18 +13,53 @@
         "additionalProperties": false,
         "properties": {
           "name": { "type": "string" },
+          "when": { "type": "string" },
           "run": { "type": "string", "minLength": 1 },
           "assert": { "type": "string", "minLength": 1 },
           "exec": {
             "type": "array",
             "minItems": 1,
             "items": { "type": "string", "minLength": 1 }
+          },
+          "install": {
+            "type": "object",
+            "additionalProperties": { "type": "string", "minLength": 1 },
+            "properties": {
+              "mac":     { "type": "string" },
+              "darwin":  { "type": "string" },
+              "linux":   { "type": "string" },
+              "windows": { "type": "string" },
+              "ios":     { "type": "string" },
+              "android": { "type": "string" }
+            }
+          },
+          "artifact": {
+            "type": "object",
+            "required": ["build"],
+            "additionalProperties": false,
+            "properties": {
+              "src": { "type": "string" },
+              "build": {
+                "type": "object",
+                "additionalProperties": { "type": "string", "minLength": 1 },
+                "properties": {
+                  "mac":     { "type": "string" },
+                  "darwin":  { "type": "string" },
+                  "linux":   { "type": "string" },
+                  "windows": { "type": "string" },
+                  "ios":     { "type": "string" },
+                  "android": { "type": "string" }
+                }
+              }
+            }
           }
         },
         "anyOf": [
           { "required": ["run"] },
           { "required": ["assert"] },
-          { "required": ["exec"] }
+          { "required": ["exec"] },
+          { "required": ["install"] },
+          { "required": ["artifact"] }
         ]
       }
     }

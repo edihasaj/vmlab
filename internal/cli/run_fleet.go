@@ -16,6 +16,7 @@ import (
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/flow"
 	"github.com/edihasaj/vmlab/internal/hooks"
+	"github.com/edihasaj/vmlab/internal/notify"
 	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
@@ -64,7 +65,7 @@ type fleetResult struct {
 // (Up → hooks → run → hooks → Down), its own evidence subdir under the
 // shared run, and its own per-target log files. One aggregate Discord
 // event fires at start, one at end — individual instances never spam.
-func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string, insts []provider.Instance, rest []string, dryRun, asJSON, noEvidence, noNotify bool, maxParallel int, failFast, continueOnError bool, retries int) error {
+func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string, insts []provider.Instance, rest []string, dryRun, asJSON, noEvidence, noNotify bool, maxParallel int, failFast, continueOnError bool, retries int, fromSnapshot, format string) error {
 	if len(insts) == 0 {
 		return fmt.Errorf("no instances matched %s", selectorArg)
 	}
@@ -117,7 +118,9 @@ func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string
 		_ = run.MarkRunning()
 	}
 	nfy := loadNotifier(cmd, paths, noNotify, fleetInst, selectorArg+fmt.Sprintf(" ×%d", len(insts)), cmdLine, run)
-	nfy.Start()
+	if !isMatrixFormat(format) {
+		nfy.Start()
+	}
 
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
@@ -151,7 +154,7 @@ func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string
 				exits[i] = 1
 				return
 			}
-			res := runOneFleetMember(ctx, cmd, paths, run, insts[i], loadedFlow, cmdArgs, retries)
+			res := runOneFleetMember(ctx, cmd, paths, run, insts[i], loadedFlow, cmdArgs, retries, fromSnapshot)
 			results[i] = res
 			exits[i] = res.Exit
 			if res.Exit != 0 || res.Error != "" {
@@ -205,9 +208,50 @@ func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string
 	}
 	nfy.cmd = fmt.Sprintf("%s · %d ok / %d failed", cmdLine, len(insts)-int(failures.Load()), failures.Load())
 	nfy.run = run
-	nfy.FinishWithStderr(0, totalMs, 0, exit, firstError(results), errSummary.String())
+	if isMatrixFormat(format) {
+		summaryRows := make([]notify.MatrixSummaryRow, 0, len(results))
+		for _, r := range results {
+			status := "pass"
+			if r.Exit != 0 || r.Error != "" {
+				status = "fail"
+			}
+			summaryRows = append(summaryRows, notify.MatrixSummaryRow{
+				Target:     r.Instance,
+				Provider:   r.Provider,
+				Status:     status,
+				ExitCode:   r.Exit,
+				DurationMs: r.UpMs + r.RunMs + r.DownMs,
+				Error:      r.Error,
+			})
+		}
+		nfy.FinishMatrix(summaryRows, totalMs, exit != 0, firstError(results))
+	} else {
+		nfy.FinishWithStderr(0, totalMs, 0, exit, firstError(results), errSummary.String())
+	}
 
-	if asJSON {
+	if isMatrixFormat(format) {
+		rows := make([]MatrixRow, 0, len(results))
+		runDir := ""
+		if run != nil {
+			runDir = run.Dir
+		}
+		for _, r := range results {
+			row := MatrixRow{
+				Target:     r.Instance,
+				Provider:   r.Provider,
+				Status:     "pass",
+				ExitCode:   r.Exit,
+				DurationMs: r.UpMs + r.RunMs + r.DownMs,
+			}
+			if r.Exit != 0 || r.Error != "" {
+				row.Status = "fail"
+				row.Error = r.Error
+				row.Tail = tailStderr(runDir, r.Instance)
+			}
+			rows = append(rows, row)
+		}
+		_ = emitMatrix(cmd.OutOrStdout(), rows)
+	} else if asJSON {
 		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 			"selector": selectorArg,
 			"results":  results,
@@ -223,7 +267,7 @@ func runInstanceFleet(cmd *cobra.Command, paths config.Paths, selectorArg string
 
 // runOneFleetMember executes one instance's full lifecycle inside a fleet
 // run. Output streams to per-instance log files under <run.Dir>/targets/<inst>/.
-func runOneFleetMember(ctx context.Context, cmd *cobra.Command, paths config.Paths, parent *evidence.Run, inst provider.Instance, fl *flow.Flow, cmdArgs []string, retries int) fleetResult {
+func runOneFleetMember(ctx context.Context, cmd *cobra.Command, paths config.Paths, parent *evidence.Run, inst provider.Instance, fl *flow.Flow, cmdArgs []string, retries int, fromSnapshot string) fleetResult {
 	r := fleetResult{Instance: inst.Name, Provider: inst.Provider}
 	pr, err := provider.Default().Get(inst.Provider)
 	if err != nil {
@@ -239,6 +283,12 @@ func runOneFleetMember(ctx context.Context, cmd *cobra.Command, paths config.Pat
 		return r
 	}
 	defer lock.Release()
+
+	if err := restoreSnapshotIfRequested(ctx, pr, inst, fromSnapshot); err != nil {
+		r.Error = err.Error()
+		r.Exit = 1
+		return r
+	}
 
 	// Per-instance log writers, prefixed with [inst] so concurrent output is
 	// readable on the terminal.
