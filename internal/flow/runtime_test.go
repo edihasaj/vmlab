@@ -16,7 +16,8 @@ func TestSubstitute_AllSyntaxes(t *testing.T) {
 		`pushd "%VMLAB_SYNC_DIR%"`:       `pushd "\\Mac\recall"`,
 		`$VMLAB_TARGET on $VMLAB_OS`:     `win on windows`,
 		`literal $ sign with no var`:     `literal $ sign with no var`,
-		`unknown $NOPE becomes empty`:    `unknown  becomes empty`,
+		`unknown $NOPE stays literal`:    `unknown $NOPE stays literal`,
+		`powershell $i preserved`:        `powershell $i preserved`,
 		`mixed $VMLAB_OS / %VMLAB_OS%`:   `mixed windows / windows`,
 	}
 	for in, want := range cases {

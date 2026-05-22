@@ -42,8 +42,11 @@ func (r *runtime) substitute(s string) string {
 	return expandVars(s, r.vars)
 }
 
-// expandVars handles $NAME, ${NAME}, and %NAME% in one pass. Tight: enough
-// for our built-ins. Not a full shell-quote-aware parser.
+// expandVars handles $NAME, ${NAME}, and %NAME% in one pass. Only names that
+// exist in `vars` are substituted; unknown references are left literal so
+// shell scripts containing native variables (PowerShell $i, bash $PATH, cmd
+// %USERNAME%) pass through untouched. Tight: enough for our built-ins, not a
+// full shell-quote-aware parser.
 func expandVars(s string, vars map[string]string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -54,20 +57,24 @@ func expandVars(s string, vars map[string]string) string {
 				end := strings.IndexByte(s[i+2:], '}')
 				if end >= 0 {
 					name := s[i+2 : i+2+end]
-					b.WriteString(vars[name])
-					i += 2 + end + 1
-					continue
+					if v, ok := vars[name]; ok {
+						b.WriteString(v)
+						i += 2 + end + 1
+						continue
+					}
 				}
 			}
 			j := i + 1
-			for j < len(s) && (isIdentByte(s[j])) {
+			for j < len(s) && isIdentByte(s[j]) {
 				j++
 			}
 			if j > i+1 {
 				name := s[i+1 : j]
-				b.WriteString(vars[name])
-				i = j
-				continue
+				if v, ok := vars[name]; ok {
+					b.WriteString(v)
+					i = j
+					continue
+				}
 			}
 			b.WriteByte(c)
 			i++
