@@ -29,6 +29,7 @@ func newRunCmd() *cobra.Command {
 		retries         int
 		fromSnapshot    string
 		format          string
+		logPath         string
 	)
 	c := &cobra.Command{
 		Use:   "run <selector> <flow-or-cmd>...",
@@ -57,6 +58,20 @@ Examples:
 			}
 			if err := config.EnsureDirs(p); err != nil {
 				return err
+			}
+
+			// --log: tee both stdout and stderr to a single merged transcript.
+			// Solves the `vmlab run … > file` gotcha where step headers (on
+			// stderr) and step output (on stdout) end up in different streams.
+			// SetOut/SetErr propagates to runInstance / runInstanceFleet too.
+			if logPath != "" {
+				lf, err := os.Create(logPath)
+				if err != nil {
+					return fmt.Errorf("--log: %w", err)
+				}
+				defer lf.Close()
+				cmd.SetOut(io.MultiWriter(cmd.OutOrStdout(), lf))
+				cmd.SetErr(io.MultiWriter(cmd.ErrOrStderr(), lf))
 			}
 
 			selectorArg := args[0]
@@ -241,6 +256,7 @@ Examples:
 	c.Flags().IntVar(&retries, "retries", 0, "retry the inner run on failure (only for @<instance>; lifecycle Up/Down run once)")
 	c.Flags().StringVar(&fromSnapshot, "from-snapshot", "", "restore named snapshot before Up (only for @<instance> / @@<tag>; provider must support snapshots)")
 	c.Flags().StringVar(&format, "format", "", "compact output: matrix (newline-delimited JSON, one row per target/instance, stderr tail on failure)")
+	c.Flags().StringVar(&logPath, "log", "", "tee merged stdout+stderr to a file (useful when running detached: `vmlab run … --log out.log &`)")
 	return c
 }
 
