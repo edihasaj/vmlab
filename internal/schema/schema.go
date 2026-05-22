@@ -49,6 +49,17 @@ func mustCompile(name string, data []byte) *jsonschema.Schema {
 	return s
 }
 
+// RawTarget returns the embedded target JSON schema bytes. Callers must
+// treat the result as read-only — it's the source-of-truth blob baked at
+// compile time.
+func RawTarget() []byte { return targetSchemaBytes }
+
+// RawFlow returns the embedded flow JSON schema bytes.
+func RawFlow() []byte { return flowSchemaBytes }
+
+// RawInstance returns the embedded instance JSON schema bytes.
+func RawInstance() []byte { return instanceSchemaBytes }
+
 // ValidateTarget parses YAML bytes and validates against the target schema.
 // path is used for error context only.
 func ValidateTarget(path string, data []byte) error {

@@ -30,6 +30,8 @@ func NewRoot() *cobra.Command {
 		newVersionCmd(),
 		newTargetCmd(),
 		newProviderCmd(),
+		newTransportCmd(),
+		newSchemaCmd(),
 		newInstanceCmd(),
 		newDoctorCmd(),
 		newRunCmd(),
