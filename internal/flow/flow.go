@@ -52,6 +52,14 @@ type Step struct {
 	Sync     string            `yaml:"sync,omitempty"`
 	When     string            `yaml:"when,omitempty"`
 	Name     string            `yaml:"name,omitempty"`
+	// Workdir is the cwd inside the guest for run/assert. cmd.exe gets
+	// pushd (works on UNC), sh gets cd. Step-level overrides flow-level.
+	// Variables ($VMLAB_SYNC_DIR etc.) are substituted before use.
+	Workdir string `yaml:"workdir,omitempty"`
+	// Env exports K=V into the step's environment. Substitution applies
+	// to values. Implemented as a shell-prefix so the transport contract
+	// (which has no env channel) stays unchanged.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // ArtifactSpec describes a host-side build that produces a binary per OS.
@@ -82,6 +90,12 @@ type ArtifactSpec struct {
 type Flow struct {
 	Name  string `yaml:"name,omitempty"`
 	Steps []Step `yaml:"steps"`
+
+	// Workdir, Env are flow-level defaults applied to every step unless the
+	// step overrides them. Lets a flow say "everything runs in $VMLAB_SYNC_DIR"
+	// once instead of repeating it.
+	Workdir string            `yaml:"workdir,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
 
 	// SourceFile records where the flow was loaded from.
 	SourceFile string `yaml:"-"`
@@ -142,6 +156,7 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 	results := make([]StepResult, 0, len(f.Steps))
 	osKind := t.OSKind()
 	arch := t.SettingString("arch") // optional; "" matches any arch clause
+	rt := newRuntime(t)
 	for i, s := range f.Steps {
 		// Optional gate. A "no match" outcome is a deliberate skip, not a
 		// failure — flows should describe the universe of targets and rely
@@ -186,21 +201,36 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 		// Sync step pushes a host path into the guest via the target's
 		// transport. Lets a flow start with `- sync: .` so subsequent
 		// `run:` steps can compile / test the just-shipped source tree.
+		// After a successful Sync the transport's GuestMount (if it has
+		// one) tells us where the bits landed inside the guest; the
+		// path is exposed as $VMLAB_SYNC_DIR for later steps.
 		if s.Sync != "" {
 			start := time.Now()
-			fmt.Fprintf(stderr, "step %d (sync): %s\n", i, s.Sync)
-			err := tr.Sync(ctx, t, s.Sync)
+			src := rt.substitute(s.Sync)
+			fmt.Fprintf(stderr, "step %d (sync): %s\n", i, src)
+			err := tr.Sync(ctx, t, src)
 			dur := time.Since(start)
-			sr := StepResult{Index: i, Kind: "sync", Cmd: s.Sync, Name: s.Name, DurationMs: dur.Milliseconds()}
+			sr := StepResult{Index: i, Kind: "sync", Cmd: src, Name: s.Name, DurationMs: dur.Milliseconds()}
 			if err != nil {
 				sr.ExitCode = 1
 				sr.Error = err.Error()
 				results = append(results, sr)
 				return results, err
 			}
+			if mount := transport.GuestMountFor(tr, t, src); mount != "" {
+				rt.set("VMLAB_SYNC_DIR", mount)
+				fmt.Fprintf(stderr, "step %d (sync): VMLAB_SYNC_DIR=%s\n", i, mount)
+			}
 			results = append(results, sr)
 			continue
 		}
+
+		// Effective workdir/env: step wins, else flow-level default.
+		workdir := rt.substitute(s.Workdir)
+		if workdir == "" {
+			workdir = rt.substitute(f.Workdir)
+		}
+		env := mergedEnv(f.Env, s.Env, rt)
 
 		var kind, cmd string
 		var argv []string
@@ -215,17 +245,23 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 				fmt.Fprintf(stderr, "step %d (skip): install has no entry for os=%s\n", i, osKind)
 				continue
 			}
-			kind, cmd = "install", pick
-			argv = transport.WrapShell(t, cmd)
+			kind, cmd = "install", rt.substitute(pick)
+			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))
 		case len(s.Exec) > 0:
-			kind, argv = "exec", s.Exec
+			// exec is intentionally raw argv; only substitute each element,
+			// don't shell-wrap, don't apply workdir/env (use run for that).
+			kind = "exec"
+			argv = make([]string, len(s.Exec))
+			for j, a := range s.Exec {
+				argv[j] = rt.substitute(a)
+			}
 			cmd = strings.Join(argv, " ")
 		case s.Run != "":
-			kind, cmd = "run", s.Run
-			argv = transport.WrapShell(t, cmd)
+			kind, cmd = "run", rt.substitute(s.Run)
+			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))
 		case s.Assert != "":
-			kind, cmd = "assert", s.Assert
-			argv = transport.WrapShell(t, cmd)
+			kind, cmd = "assert", rt.substitute(s.Assert)
+			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))
 		default:
 			return results, fmt.Errorf("step %d: must set run, assert, exec, install, or artifact", i)
 		}

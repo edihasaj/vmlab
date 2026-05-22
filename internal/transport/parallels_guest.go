@@ -28,7 +28,7 @@ func NewParallelsGuest() Transport { return &parallelsGuestTransport{bin: "ssh"}
 func (p *parallelsGuestTransport) Name() string { return "parallels-guest" }
 
 func (p *parallelsGuestTransport) Capabilities() Caps {
-	return Caps{Shell: false, Sync: true, Install: false}
+	return Caps{Shell: false, Sync: true, Install: false, Screenshot: true}
 }
 
 func (p *parallelsGuestTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -156,7 +156,7 @@ func stageOnRemoteHost(ctx context.Context, t target.Target, host, src, name str
 	remoteAbsParent := "$HOME/" + remoteParent
 	remotePath := remoteParent + "/" + name
 	// Ensure parent dir exists; ssh into the host and mkdir -p.
-	mkArgs := []string{"ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "RequestTTY=no"}
+	mkArgs := append([]string{"ssh"}, sshOpts(t)...)
 	if port != "" {
 		mkArgs = append(mkArgs, "-p", port)
 	}
@@ -178,12 +178,7 @@ func stageOnRemoteHost(ctx context.Context, t target.Target, host, src, name str
 	// rsync src/ → host:<remotePath>/ . Trailing slash on src makes rsync
 	// copy contents into the named dir rather than nesting another level.
 	srcArg := strings.TrimRight(src, "/") + "/"
-	rsyncArgs := []string{"rsync", "-az", "--delete"}
-	if port != "" {
-		rsyncArgs = append(rsyncArgs, "-e", "ssh -p "+port+" -o BatchMode=yes -o ConnectTimeout=8")
-	} else {
-		rsyncArgs = append(rsyncArgs, "-e", "ssh -o BatchMode=yes -o ConnectTimeout=8")
-	}
+	rsyncArgs := []string{"rsync", "-az", "--delete", "-e", rsyncRemoteShell(t)}
 	// Skip the usual suspects so we don't ship gigabytes of node_modules / build dirs.
 	for _, ex := range []string{".git", "node_modules", "dist", ".next", "target", ".venv", "__pycache__"} {
 		rsyncArgs = append(rsyncArgs, "--exclude", ex)
@@ -198,6 +193,24 @@ func stageOnRemoteHost(ctx context.Context, t target.Target, host, src, name str
 		return "", fmt.Errorf("rsync exit=%d: %s", res.ExitCode, strings.TrimSpace(errBuf.String()))
 	}
 	return stagedAbs, nil
+}
+
+// GuestMount answers "where inside the guest does the synced source live?"
+// Parallels mounts shared folders at \\Mac\<sharename> for Windows guests and
+// /media/psf/<sharename> for Linux. Lets the flow runner expose this as
+// $VMLAB_SYNC_DIR so subsequent steps don't hardcode the UNC path.
+func (p *parallelsGuestTransport) GuestMount(t target.Target, src string) string {
+	name := t.SettingString("parallels", "syncShareName")
+	if name == "" {
+		name = shareNameFromSrc(src)
+	}
+	switch t.OSKind() {
+	case "windows":
+		return `\\Mac\` + name
+	case "linux":
+		return "/media/psf/" + name
+	}
+	return ""
 }
 
 func (p *parallelsGuestTransport) Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {
@@ -219,12 +232,97 @@ func (p *parallelsGuestTransport) Shell(ctx context.Context, t target.Target) er
 	return fmt.Errorf("parallels-guest: interactive shell not supported (use prlctl enter on the host)")
 }
 
+// Screenshot captures the VM display via `prlctl capture`. When parallels.host
+// is set, the capture lands on the remote Mac first; we then scp it back to
+// the requested local path. Idempotent: rewrites path on each call.
 func (p *parallelsGuestTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	return fmt.Errorf("parallels-guest: screenshot not supported")
+	vm := t.SettingString("parallels", "vm")
+	if vm == "" {
+		return fmt.Errorf("parallels-guest: parallels.vm is required")
+	}
+	host := t.SettingString("parallels", "host")
+	remotePath := path
+	if host != "" {
+		// Stage on the host's /tmp; scp pull after capture.
+		remotePath = "/tmp/vmlab-capture-" + shareNameFromSrc(path) + ".png"
+	}
+	args, err := prlctlArgs(t, []string{"capture", vm, "--file", remotePath})
+	if err != nil {
+		return err
+	}
+	var buf strings.Builder
+	res, err := runExternal(ctx, args[0], args[1:], &buf, &buf)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("prlctl capture exit=%d: %s", res.ExitCode, strings.TrimSpace(buf.String()))
+	}
+	if host == "" {
+		return nil
+	}
+	// Pull back via scp.
+	user := t.SettingString("parallels", "user")
+	port := t.SettingString("parallels", "port")
+	dest := host
+	if user != "" {
+		dest = user + "@" + host
+	}
+	scpArgs := []string{"-q"}
+	if id := t.SettingString("parallels", "identity"); id != "" {
+		scpArgs = append(scpArgs, "-i", id, "-o", "IdentitiesOnly=yes")
+	}
+	if ag := t.SettingString("parallels", "identityAgent"); ag != "" {
+		scpArgs = append(scpArgs, "-o", "IdentityAgent="+ag)
+	}
+	if port != "" {
+		scpArgs = append(scpArgs, "-P", port)
+	}
+	scpArgs = append(scpArgs, dest+":"+remotePath, path)
+	res, err = runExternal(ctx, "scp", scpArgs, io.Discard, io.Discard)
+	if err != nil {
+		return fmt.Errorf("scp screenshot back: %w", err)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("scp screenshot back: exit=%d", res.ExitCode)
+	}
+	return nil
 }
 
 func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
 	return fmt.Errorf("parallels-guest: gui not supported")
+}
+
+// sshOpts returns the -o / -i flags this transport always uses when SSHing
+// to parallels.host. Centralised so prlctlArgs / staging / screenshot scp
+// all honour parallels.identity + parallels.identityAgent.
+func sshOpts(t target.Target) []string {
+	out := []string{"-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "RequestTTY=no"}
+	if id := t.SettingString("parallels", "identity"); id != "" {
+		out = append(out, "-i", id, "-o", "IdentitiesOnly=yes")
+	}
+	if ag := t.SettingString("parallels", "identityAgent"); ag != "" {
+		out = append(out, "-o", "IdentityAgent="+ag)
+	}
+	return out
+}
+
+// rsyncRemoteShell builds the -e value for rsync so it inherits identity /
+// agent / port settings from the target.
+func rsyncRemoteShell(t target.Target) string {
+	parts := []string{"ssh"}
+	for _, o := range sshOpts(t) {
+		// shell-quote each piece since rsync hands -e to /bin/sh.
+		if strings.ContainsAny(o, " '\"\\$`") {
+			parts = append(parts, "'"+strings.ReplaceAll(o, "'", `'\''`)+"'")
+		} else {
+			parts = append(parts, o)
+		}
+	}
+	if port := t.SettingString("parallels", "port"); port != "" {
+		parts = append(parts, "-p", port)
+	}
+	return strings.Join(parts, " ")
 }
 
 // prlctlArgs builds the argv for invoking prlctl with the given verb+args,
@@ -250,7 +348,7 @@ func prlctlArgs(t target.Target, prlArgs []string) ([]string, error) {
 	// Remote: ssh host -- "PATH=...:<path> prlctl <quoted args>"
 	user := t.SettingString("parallels", "user")
 	port := t.SettingString("parallels", "port")
-	sshArgs := []string{"ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "RequestTTY=no"}
+	sshArgs := append([]string{"ssh"}, sshOpts(t)...)
 	if port != "" {
 		sshArgs = append(sshArgs, "-p", port)
 	}
