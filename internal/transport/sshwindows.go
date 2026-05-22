@@ -49,7 +49,7 @@ func NewSSHWindows() Transport { return &sshWindowsTransport{} }
 func (s *sshWindowsTransport) Name() string { return "ssh-windows" }
 
 func (s *sshWindowsTransport) Capabilities() Caps {
-	return Caps{Shell: true, Sync: true, Install: true}
+	return Caps{Shell: true, Sync: true, Install: true, Screenshot: true}
 }
 
 func (s *sshWindowsTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -153,14 +153,74 @@ func (s *sshWindowsTransport) Shell(ctx context.Context, t target.Target) error 
 }
 
 func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	// Screenshots happen via a Windows-side GUI driver (see GUI). Until that
-	// lands as a first-class transport it's better to surface the gap than
-	// silently no-op.
-	return fmt.Errorf("ssh-windows: screenshot not yet supported (M1 GUI stub pending)")
+	// Try a PowerShell-based screen grab: the System.Windows.Forms +
+	// System.Drawing route works without any extra packages on stock Windows
+	// 10/11 desktops with a primary display. Headless Server Core / SSH-only
+	// hosts (no graphics stack loaded) will fail here — that's expected; for
+	// those, drive a UI tool over RDP/VNC instead.
+	if path == "" {
+		return fmt.Errorf("ssh-windows: screenshot needs a destination path")
+	}
+	remoteTmp := `$env:TEMP + '\vmlab-shot.png'`
+	script := strings.Join([]string{
+		"Add-Type -AssemblyName System.Windows.Forms;",
+		"Add-Type -AssemblyName System.Drawing;",
+		"$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;",
+		"$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height;",
+		"$g = [System.Drawing.Graphics]::FromImage($bmp);",
+		"$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size);",
+		"$out = " + remoteTmp + ";",
+		"$bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png);",
+		"[Console]::Out.Write($out)",
+	}, " ")
+	// Force PowerShell for the capture regardless of the configured shell —
+	// cmd.exe cannot drive .NET assemblies directly. Build the remote command
+	// directly with -EncodedCommand so we don't touch the target's settings.
+	dial := winSSHDialArgs(t, false)
+	enc := encodePowerShell("& { " + script + " }")
+	remoteCmd := "powershell -NoProfile -NonInteractive -EncodedCommand " + enc
+	sshArgs := append(dial, remoteCmd)
+	var outBuf strings.Builder
+	res, err := runExternal(ctx, "ssh", sshArgs, &outBuf, io.Discard)
+	if err != nil {
+		return fmt.Errorf("ssh-windows screenshot: %w", err)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("ssh-windows screenshot exit=%d", res.ExitCode)
+	}
+	remotePath := strings.TrimSpace(outBuf.String())
+	if remotePath == "" {
+		return fmt.Errorf("ssh-windows: remote screenshot returned empty path")
+	}
+	// Pull the PNG back via scp. rsync would also work but scp is universal.
+	host := t.SettingString("ssh", "host")
+	user := winSSHUser(t)
+	args := []string{"-q", "-o", "StrictHostKeyChecking=" + winSSHStrict(t)}
+	if id := t.SettingString("ssh", "identity"); id != "" {
+		args = append(args, "-i", id)
+	}
+	if port := t.SettingString("ssh", "port"); port != "" {
+		args = append(args, "-P", port)
+	}
+	args = append(args, fmt.Sprintf("%s@%s:%s", user, host, remotePath), path)
+	res, err = runExternal(ctx, "scp", args, io.Discard, io.Discard)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("scp screenshot exit=%d", res.ExitCode)
+	}
+	return nil
 }
 
 func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
-	return fmt.Errorf("ssh-windows: gui not yet supported (M1 GUI stub pending)")
+	// GUI driving on Windows belongs in a dedicated transport (a future
+	// `winappdriver` adapter, or UI Automation over SSH). For now, the only
+	// kind we can satisfy in-process is `screenshot`.
+	if a.Kind == "screenshot" {
+		return s.Screenshot(ctx, t, a.Path)
+	}
+	return fmt.Errorf("ssh-windows: gui kind %q not supported (use a Windows GUI driver such as UIA / WinAppDriver)", a.Kind)
 }
 
 // winShell returns the configured Windows-side shell choice.

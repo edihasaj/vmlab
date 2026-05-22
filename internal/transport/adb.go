@@ -17,7 +17,7 @@ func NewADB() Transport { return &adbTransport{bin: "adb"} }
 func (a *adbTransport) Name() string { return "adb" }
 
 func (a *adbTransport) Capabilities() Caps {
-	return Caps{Shell: true, Install: true, Mobile: true, Screenshot: true}
+	return Caps{Shell: true, Sync: true, Install: true, Mobile: true, Screenshot: true}
 }
 
 func (a *adbTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -52,7 +52,28 @@ func (a *adbTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 	return runExternal(ctx, a.bin, args, stdout, stderr)
 }
 
-func (a *adbTransport) Sync(ctx context.Context, t target.Target, src string) error { return nil }
+// Sync pushes src into the device via `adb push`. The remote destination is
+// configurable via adb.dest (defaults to /sdcard/vmlab). The default landing
+// pad is /sdcard because that's the only path every non-rooted Android device
+// is guaranteed to let `adb push` write to.
+func (a *adbTransport) Sync(ctx context.Context, t target.Target, src string) error {
+	if src == "" {
+		return fmt.Errorf("adb: sync requires a source path")
+	}
+	dest := t.SettingString("adb", "dest")
+	if dest == "" {
+		dest = "/sdcard/vmlab"
+	}
+	args := append(adbSerialArgs(t), "push", src, dest)
+	res, err := runExternal(ctx, a.bin, args, io.Discard, io.Discard)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("adb push exited %d", res.ExitCode)
+	}
+	return nil
+}
 
 func (a *adbTransport) Shell(ctx context.Context, t target.Target) error {
 	args := append(adbSerialArgs(t), "shell")

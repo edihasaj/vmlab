@@ -37,7 +37,13 @@ func (i *idbTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 	return runExternal(ctx, i.bin, args, stdout, stderr)
 }
 
-func (i *idbTransport) Sync(ctx context.Context, t target.Target, src string) error { return nil }
+// Sync is unsupported for idb. iOS sandboxing means file deployment is always
+// bundle-scoped (`idb file push --bundle-id <id> <src> <remote>`), not the
+// generic "copy a working tree into the device" the Sync contract assumes.
+// Use the Run path with explicit `file push --bundle-id …` args instead.
+func (i *idbTransport) Sync(ctx context.Context, t target.Target, src string) error {
+	return fmt.Errorf("idb: sync is bundle-scoped on iOS — use `run -- file push --bundle-id <id> %s <remote>`", src)
+}
 
 func (i *idbTransport) Shell(ctx context.Context, t target.Target) error {
 	return fmt.Errorf("idb: shell not supported")

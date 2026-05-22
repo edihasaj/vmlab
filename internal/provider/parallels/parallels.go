@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path"
@@ -356,7 +357,12 @@ func (p *Provider) Down(ctx context.Context, i provider.Instance, d provider.Dis
 			return nil
 		}
 		if cur != provider.StateStopped {
-			_, _ = p.runPrlctl(ctx, i, "stop", vm, "--kill")
+			if _, err := p.runPrlctl(ctx, i, "stop", vm, "--kill"); err != nil {
+				// We still try delete — prlctl will reject if the VM is
+				// genuinely running, surfacing a clearer error from there. But
+				// log the kill failure so it isn't an invisible regression.
+				slog.Warn("parallels stop --kill failed before delete", "vm", vm, "err", err)
+			}
 		}
 		_, err := p.runPrlctl(ctx, i, "delete", vm)
 		return err

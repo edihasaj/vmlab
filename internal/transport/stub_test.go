@@ -124,6 +124,50 @@ func TestADBRoutesShellByDefault(t *testing.T) {
 	}
 }
 
+func TestADBSyncPushesToDevice(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "adb", 0)
+	withPath(t, dir)
+
+	tr := NewADB()
+	tgt := target.Target{Settings: map[string]any{"adb": map[string]any{"serial": "RFNX001", "dest": "/sdcard/Download/app"}}}
+	if err := tr.Sync(context.Background(), tgt, "./build/app.apk"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	got := readLastArgs(t, args)
+	for _, want := range []string{"-s RFNX001", "push", "./build/app.apk", "/sdcard/Download/app"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in argv: %s", want, got)
+		}
+	}
+}
+
+func TestADBSyncDefaultDest(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "adb", 0)
+	withPath(t, dir)
+
+	tr := NewADB()
+	if err := tr.Sync(context.Background(), target.Target{}, "./src"); err != nil {
+		t.Fatal(err)
+	}
+	got := readLastArgs(t, args)
+	if !strings.Contains(got, "push ./src /sdcard/vmlab") {
+		t.Errorf("expected default /sdcard/vmlab dest, got: %s", got)
+	}
+}
+
+func TestIDBSyncSurfacesLimitation(t *testing.T) {
+	tr := NewIDB()
+	err := tr.Sync(context.Background(), target.Target{}, "./src")
+	if err == nil {
+		t.Fatal("expected error explaining bundle-scoped limitation")
+	}
+	if !strings.Contains(err.Error(), "bundle") {
+		t.Errorf("expected bundle-related error, got: %v", err)
+	}
+}
+
 func TestADBPassThroughVerbs(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "adb", 0)
