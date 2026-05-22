@@ -227,7 +227,7 @@ func handleRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 				}
 				return 0, nil
 			}
-			res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmdLine}, outW, errW)
+			res, err := tr.Run(ctx, t, transport.WrapShell(t, cmdLine), outW, errW)
 			return res.ExitCode, err
 		})
 	exit := fleet.AggregateExit(outcomes)

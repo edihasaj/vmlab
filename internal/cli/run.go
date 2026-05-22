@@ -152,7 +152,7 @@ Examples:
 						}
 						return 0, nil
 					}
-					res, err := tr.Run(ctx, t, []string{"sh", "-lc", cmdLine}, teeOut, teeErr)
+					res, err := tr.Run(ctx, t, transport.WrapShell(t, cmdLine), teeOut, teeErr)
 					return res.ExitCode, err
 				})
 

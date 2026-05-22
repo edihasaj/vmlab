@@ -49,6 +49,7 @@ type Step struct {
 	Exec     []string          `yaml:"exec,omitempty"`
 	Install  map[string]string `yaml:"install,omitempty"`
 	Artifact *ArtifactSpec     `yaml:"artifact,omitempty"`
+	Sync     string            `yaml:"sync,omitempty"`
 	When     string            `yaml:"when,omitempty"`
 	Name     string            `yaml:"name,omitempty"`
 }
@@ -182,6 +183,25 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			continue
 		}
 
+		// Sync step pushes a host path into the guest via the target's
+		// transport. Lets a flow start with `- sync: .` so subsequent
+		// `run:` steps can compile / test the just-shipped source tree.
+		if s.Sync != "" {
+			start := time.Now()
+			fmt.Fprintf(stderr, "step %d (sync): %s\n", i, s.Sync)
+			err := tr.Sync(ctx, t, s.Sync)
+			dur := time.Since(start)
+			sr := StepResult{Index: i, Kind: "sync", Cmd: s.Sync, Name: s.Name, DurationMs: dur.Milliseconds()}
+			if err != nil {
+				sr.ExitCode = 1
+				sr.Error = err.Error()
+				results = append(results, sr)
+				return results, err
+			}
+			results = append(results, sr)
+			continue
+		}
+
 		var kind, cmd string
 		var argv []string
 		switch {
@@ -196,20 +216,16 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 				continue
 			}
 			kind, cmd = "install", pick
-			argv = []string{"sh", "-lc", cmd}
-			if osKind == "windows" {
-				// PowerShell — sh isn't available in standard Windows guests.
-				argv = []string{"powershell", "-NoProfile", "-Command", cmd}
-			}
+			argv = transport.WrapShell(t, cmd)
 		case len(s.Exec) > 0:
 			kind, argv = "exec", s.Exec
 			cmd = strings.Join(argv, " ")
 		case s.Run != "":
 			kind, cmd = "run", s.Run
-			argv = []string{"sh", "-lc", cmd}
+			argv = transport.WrapShell(t, cmd)
 		case s.Assert != "":
 			kind, cmd = "assert", s.Assert
-			argv = []string{"sh", "-lc", cmd}
+			argv = transport.WrapShell(t, cmd)
 		default:
 			return results, fmt.Errorf("step %d: must set run, assert, exec, install, or artifact", i)
 		}

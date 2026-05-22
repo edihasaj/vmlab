@@ -120,7 +120,7 @@ func (r *Runner) runOne(ctx context.Context, s Step) error {
 	case len(s.Exec) > 0:
 		return r.execHost(ctx, s.Exec, env)
 	case s.Target != "":
-		return r.execTarget(ctx, []string{"sh", "-lc", s.Target}, env)
+		return r.execTarget(ctx, transport.WrapShell(r.Target, s.Target), env)
 	case len(s.TargetExec) > 0:
 		return r.execTarget(ctx, s.TargetExec, env)
 	default:
