@@ -164,6 +164,27 @@ func wrapForExec(t target.Target, cmd, workdir string, env map[string]string) st
 	return b.String()
 }
 
+// wrapForBackground detaches the wrapped command line so the transport's Run
+// returns as soon as the child is spawned. Used by `background: true` steps.
+//
+// Windows: `start "" /B cmd.exe /c "<line>"` — empty title is required for
+// `start` to treat the next token as the command and not the title. The
+// inner cmd.exe /c handles redirects inside <line> (`> log 2> err`) which
+// `start /B` alone wouldn't honour. Embedded `"` in <line> is escaped to
+// `""` so cmd.exe parses the inner string correctly.
+//
+// POSIX: `(<line>) &` — subshell + `&`. We don't add `nohup` because the
+// typical vmlab usage starts a daemon, probes it, then kills it within the
+// same flow, well before any controlling-terminal SIGHUP would arrive.
+// Callers wanting longer detach can prepend `nohup ` to their own command.
+func wrapForBackground(t target.Target, line string) string {
+	if t.OSKind() == "windows" {
+		escaped := strings.ReplaceAll(line, `"`, `""`)
+		return `start "" /B cmd.exe /c "` + escaped + `"`
+	}
+	return "(" + line + ") &"
+}
+
 // mergedEnv layers step env over flow env, substituting variables on values.
 // Returns nil when both sides are empty so callers can skip the prefix.
 func mergedEnv(flowEnv, stepEnv map[string]string, rt *runtime) map[string]string {

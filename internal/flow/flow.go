@@ -63,6 +63,15 @@ type Step struct {
 	// to values. Implemented as a shell-prefix so the transport contract
 	// (which has no env channel) stays unchanged.
 	Env map[string]string `yaml:"env,omitempty"`
+
+	// Background fires the command and returns immediately. Use for daemons
+	// you want to probe (and later kill) from subsequent steps. Wraps the
+	// command via `start "" /B cmd /c "<cmd>"` on Windows and `<cmd> &` on
+	// POSIX so the transport's Run returns as soon as the child is spawned.
+	// The step is recorded as `run (bg)` in evidence. The caller is
+	// responsible for cleanup — pair with a `taskkill` / `pkill` step or a
+	// PID file. Only meaningful on `run:`; ignored elsewhere.
+	Background bool `yaml:"background,omitempty"`
 }
 
 // ArtifactSpec describes a host-side build that produces a binary per OS.
@@ -261,7 +270,12 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			cmd = strings.Join(argv, " ")
 		case s.Run != "":
 			kind, cmd = "run", rt.substitute(s.Run)
-			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))
+			line := wrapForExec(t, cmd, workdir, env)
+			if s.Background {
+				line = wrapForBackground(t, line)
+				kind = "run (bg)"
+			}
+			argv = transport.WrapShell(t, line)
 		case s.Assert != "":
 			kind, cmd = "assert", rt.substitute(s.Assert)
 			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))

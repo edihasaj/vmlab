@@ -52,6 +52,25 @@ func TestWrapForExec_NoWorkdirNoEnvIsPassThrough(t *testing.T) {
 	}
 }
 
+func TestWrapForBackground_WindowsUsesStartCmdC(t *testing.T) {
+	tgt := target.Target{Name: "w", Transport: "parallels-guest"}
+	line := `set "X=y" && pushd "C:\work" && node daemon.js > "out.log" 2> "err.log"`
+	got := wrapForBackground(tgt, line)
+	want := `start "" /B cmd.exe /c "set ""X=y"" && pushd ""C:\work"" && node daemon.js > ""out.log"" 2> ""err.log"""`
+	if got != want {
+		t.Fatalf("windows bg wrap mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestWrapForBackground_PosixSubshellAndAmp(t *testing.T) {
+	tgt := target.Target{Name: "u", Transport: "ssh"}
+	got := wrapForBackground(tgt, "node daemon.js > out.log 2> err.log")
+	want := `(node daemon.js > out.log 2> err.log) &`
+	if got != want {
+		t.Fatalf("posix bg wrap mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestMergedEnv_StepOverridesFlow(t *testing.T) {
 	rt := newRuntime(target.Target{Name: "x", Transport: "ssh"})
 	rt.set("VMLAB_SYNC_DIR", "/staged")

@@ -27,6 +27,7 @@
           "run": { "type": "string", "minLength": 1 },
           "assert": { "type": "string", "minLength": 1 },
           "sync": { "type": "string", "minLength": 1 },
+          "background": { "type": "boolean" },
           "exec": {
             "type": "array",
             "minItems": 1,
