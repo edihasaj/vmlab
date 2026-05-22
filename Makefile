@@ -9,7 +9,7 @@ SMOKE_VM    ?= Windows 11
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build install test vet lint cover smoke-parallels clean
+.PHONY: help build install test vet lint cover fmt fmt-check install-hooks smoke-parallels clean
 
 help: ## Show this help.
 	@awk 'BEGIN {FS = ":.*##"; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -27,6 +27,25 @@ test: ## Run all tests.
 
 vet: ## go vet the whole module.
 	go vet $(PKG)
+
+fmt: ## Rewrite all Go sources via gofmt.
+	gofmt -w .
+
+fmt-check: ## Fail if any Go source needs gofmt (mirrors CI's fmt gate).
+	@fmt_out=$$(gofmt -l .); \
+	if [ -n "$$fmt_out" ]; then \
+		echo "gofmt issues (run 'make fmt'):"; \
+		echo "$$fmt_out"; \
+		exit 1; \
+	fi
+
+lint: fmt-check vet ## fmt-check + vet (umbrella).
+
+install-hooks: ## Symlink scripts/pre-commit.sh into .git/hooks/pre-commit.
+	@mkdir -p .git/hooks
+	@ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
+	@chmod +x scripts/pre-commit.sh
+	@echo "installed: .git/hooks/pre-commit -> scripts/pre-commit.sh"
 
 cover: ## Test with coverage, drop a coverage.out for tooling.
 	go test -coverprofile=coverage.out $(PKG)
