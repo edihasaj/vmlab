@@ -114,8 +114,8 @@ type phasedNotifier struct {
 	phases map[Phase]bool
 }
 
-func (p *phasedNotifier) Name() string                          { return p.inner.Name() }
-func (p *phasedNotifier) Phases() map[Phase]bool                { return p.phases }
+func (p *phasedNotifier) Name() string           { return p.inner.Name() }
+func (p *phasedNotifier) Phases() map[Phase]bool { return p.phases }
 func (p *phasedNotifier) Notify(ctx context.Context, ev Event) error {
 	return p.inner.Notify(ctx, ev)
 }

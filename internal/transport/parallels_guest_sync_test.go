@@ -18,10 +18,10 @@ func TestShareNameFromSrcResolvesDotToCwdBasename(t *testing.T) {
 
 func TestShareNameFromSrcKeepsTrailingComponent(t *testing.T) {
 	cases := map[string]string{
-		"/Users/edi/Projects/recall":     "recall",
-		"C:\\src\\repo":                  "repo",
-		"./flows":                        "flows",
-		"":                               "vmlab-sync",
+		"/Users/edi/Projects/recall": "recall",
+		"C:\\src\\repo":              "repo",
+		"./flows":                    "flows",
+		"":                           "vmlab-sync",
 	}
 	for in, want := range cases {
 		if got := shareNameFromSrc(in); got != want {

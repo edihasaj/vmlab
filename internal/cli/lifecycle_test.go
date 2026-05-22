@@ -13,8 +13,10 @@ import (
 // stubProvider implements provider.Provider but NOT provider.Snapshotter.
 type stubProvider struct{ name string }
 
-func (s *stubProvider) Name() string                                  { return s.name }
-func (s *stubProvider) Doctor(context.Context, provider.Instance) provider.Health { return provider.Health{OK: true} }
+func (s *stubProvider) Name() string { return s.name }
+func (s *stubProvider) Doctor(context.Context, provider.Instance) provider.Health {
+	return provider.Health{OK: true}
+}
 func (s *stubProvider) Status(context.Context, provider.Instance) (provider.State, error) {
 	return provider.StateReady, nil
 }
@@ -26,8 +28,8 @@ func (s *stubProvider) Down(context.Context, provider.Instance, provider.Dispose
 // snapProvider also implements Snapshotter so we can exercise the success path.
 type snapProvider struct {
 	stubProvider
-	restored      []string
-	restoreErr    error
+	restored   []string
+	restoreErr error
 }
 
 func (s *snapProvider) Snapshot(_ context.Context, _ provider.Instance, _, _ string) error {

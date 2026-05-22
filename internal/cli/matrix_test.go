@@ -78,11 +78,11 @@ func TestTailStderrMissingFile(t *testing.T) {
 
 func TestSanitizeForFSMatchesEvidence(t *testing.T) {
 	cases := map[string]string{
-		"plain":         "plain",
-		"with space":    "with_space",
-		"with/slash":    "with_slash",
-		"with\\slash":   "with_slash",
-		"":              "",
+		"plain":       "plain",
+		"with space":  "with_space",
+		"with/slash":  "with_slash",
+		"with\\slash": "with_slash",
+		"":            "",
 	}
 	for in, want := range cases {
 		if got := sanitizeForFS(in); got != want {

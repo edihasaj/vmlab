@@ -32,10 +32,10 @@ func DefaultConfig() Config {
 // Paths returns the resolved config and target directories, merged in
 // precedence order: built-in defaults < user (~/.vmlab) < repo (.vmlab/).
 type Paths struct {
-	UserDir   string // ~/.vmlab
-	UserFile  string // ~/.vmlab/config.yaml
-	RepoDir   string // <cwd>/.vmlab
-	RepoFile  string // <cwd>/.vmlab.yaml or <cwd>/.vmlab/config.yaml
+	UserDir     string // ~/.vmlab
+	UserFile    string // ~/.vmlab/config.yaml
+	RepoDir     string // <cwd>/.vmlab
+	RepoFile    string // <cwd>/.vmlab.yaml or <cwd>/.vmlab/config.yaml
 	RunsDir     string
 	StateDir    string   // ~/.vmlab/state — file locks, ephemeral bookkeeping
 	TargetDir   []string // ordered: user first, repo overrides

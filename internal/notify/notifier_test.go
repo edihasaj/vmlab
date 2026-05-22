@@ -69,13 +69,13 @@ func TestDiscordRendersStartMessage(t *testing.T) {
 func TestDiscordRendersFailureWithMentionAndTail(t *testing.T) {
 	d := NewDiscord("https://example.invalid", "<@42>")
 	msg := d.render(Event{
-		Phase:      PhaseFailure,
-		Instance:   "linux-hetz",
-		Selector:   "@linux-hetz",
-		Cmd:        "./run.sh",
-		RunID:      "deadbeef",
-		ExitCode:   1,
-		UpMs:       300, RunMs: 1200, DownMs: 200,
+		Phase:    PhaseFailure,
+		Instance: "linux-hetz",
+		Selector: "@linux-hetz",
+		Cmd:      "./run.sh",
+		RunID:    "deadbeef",
+		ExitCode: 1,
+		UpMs:     300, RunMs: 1200, DownMs: 200,
 		Err:        "exit status 1",
 		StderrTail: "line1\nline2\nline3",
 	})

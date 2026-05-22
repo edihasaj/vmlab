@@ -47,9 +47,9 @@ func evidenceDiffCmd() *cobra.Command {
 
 			type change struct {
 				Target string `json:"target"`
-				Was    string `json:"was"`     // pass | fail
+				Was    string `json:"was"` // pass | fail
 				Now    string `json:"now"`
-				Kind   string `json:"kind"`   // fixed | regressed | still-failing | new
+				Kind   string `json:"kind"` // fixed | regressed | still-failing | new
 				Tail   string `json:"tail,omitempty"`
 			}
 			statusOf := func(t evidence.TargetSummary) string {

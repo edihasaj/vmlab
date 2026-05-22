@@ -424,4 +424,3 @@ func restoreSnapshotIfRequested(ctx context.Context, pr provider.Provider, inst 
 	}
 	return nil
 }
-

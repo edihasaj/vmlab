@@ -226,7 +226,7 @@ func (p *Provider) run(ctx context.Context, i provider.Instance, args ...string)
 	return out, nil
 }
 
-func rg(i provider.Instance) string     { return i.SettingString("azure", "resourceGroup") }
+func rg(i provider.Instance) string { return i.SettingString("azure", "resourceGroup") }
 func vmName(i provider.Instance) string {
 	if n := i.SettingString("azure", "vmName"); n != "" {
 		return n

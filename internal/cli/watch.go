@@ -125,9 +125,9 @@ Examples:
 func hashWatchSet(paths []string) (string, error) {
 	h := sha256.New()
 	type entry struct {
-		path    string
-		mod     int64
-		size    int64
+		path string
+		mod  int64
+		size int64
 	}
 	var entries []entry
 	for _, p := range paths {

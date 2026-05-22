@@ -23,18 +23,21 @@ import (
 // must be set.
 //
 //   - run     — shell line, wrapped via `sh -lc` (POSIX).
+//
 //   - assert  — same wrapping but failures stop the flow with a clear message.
+//
 //   - exec    — argv passed directly to the transport, no shell wrapping.
 //     Use this for Windows guests (e.g. `["cmd.exe", "/c", "ver"]`) or
 //     anywhere `sh` is not available.
+//
 //   - install — per-OS map of shell lines. The flow runner picks the
 //     line that matches the target's OSKind and treats it as `run`.
 //     Lets one flow describe "install jq" without forking per OS:
 //
-//         - install:
-//             mac:     brew install jq
-//             linux:   sudo apt-get install -y jq
-//             windows: choco install -y jq
+//   - install:
+//     mac:     brew install jq
+//     linux:   sudo apt-get install -y jq
+//     windows: choco install -y jq
 //
 // `when:` is an optional filter that gates whether the step runs against
 // this target. Conditions are AND-joined comma-separated key=value or

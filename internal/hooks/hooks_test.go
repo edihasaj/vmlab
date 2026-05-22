@@ -19,8 +19,8 @@ type fakeTransport struct {
 	wantFail bool
 }
 
-func (f *fakeTransport) Name() string                      { return "fake" }
-func (f *fakeTransport) Capabilities() transport.Caps      { return transport.Caps{} }
+func (f *fakeTransport) Name() string                 { return "fake" }
+func (f *fakeTransport) Capabilities() transport.Caps { return transport.Caps{} }
 func (f *fakeTransport) Doctor(context.Context, target.Target) transport.Health {
 	return transport.Health{}
 }
@@ -35,7 +35,7 @@ func (f *fakeTransport) Run(_ context.Context, _ target.Target, cmd []string, st
 	}
 	return transport.Result{ExitCode: 0}, nil
 }
-func (f *fakeTransport) Shell(context.Context, target.Target) error            { return nil }
+func (f *fakeTransport) Shell(context.Context, target.Target) error              { return nil }
 func (f *fakeTransport) Screenshot(context.Context, target.Target, string) error { return nil }
 func (f *fakeTransport) GUI(context.Context, target.Target, transport.GUIAction) error {
 	return nil

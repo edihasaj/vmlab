@@ -357,13 +357,13 @@ func TestParallelsGuestSyncLocal(t *testing.T) {
 
 func TestParallelsGuestPosixQuote(t *testing.T) {
 	cases := map[string]string{
-		"plain":         "plain",
-		"":              "''",
-		"has space":     `'has space'`,
-		`with'quote`:    `'with'\''quote'`,
-		`a"b`:           `'a"b'`,
-		`semi;colon`:    `'semi;colon'`,
-		`back\slash`:    `'back\slash'`,
+		"plain":      "plain",
+		"":           "''",
+		"has space":  `'has space'`,
+		`with'quote`: `'with'\''quote'`,
+		`a"b`:        `'a"b'`,
+		`semi;colon`: `'semi;colon'`,
+		`back\slash`: `'back\slash'`,
 	}
 	for in, want := range cases {
 		if got := posixQuote(in); got != want {

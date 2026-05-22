@@ -11,14 +11,14 @@ func TestSubstitute_AllSyntaxes(t *testing.T) {
 	rt := newRuntime(target.Target{Name: "win", Transport: "parallels-guest"})
 	rt.set("VMLAB_SYNC_DIR", `\\Mac\recall`)
 	cases := map[string]string{
-		`cd $VMLAB_SYNC_DIR && build`:    `cd \\Mac\recall && build`,
-		`cd ${VMLAB_SYNC_DIR}/sub`:       `cd \\Mac\recall/sub`,
-		`pushd "%VMLAB_SYNC_DIR%"`:       `pushd "\\Mac\recall"`,
-		`$VMLAB_TARGET on $VMLAB_OS`:     `win on windows`,
-		`literal $ sign with no var`:     `literal $ sign with no var`,
-		`unknown $NOPE stays literal`:    `unknown $NOPE stays literal`,
-		`powershell $i preserved`:        `powershell $i preserved`,
-		`mixed $VMLAB_OS / %VMLAB_OS%`:   `mixed windows / windows`,
+		`cd $VMLAB_SYNC_DIR && build`:  `cd \\Mac\recall && build`,
+		`cd ${VMLAB_SYNC_DIR}/sub`:     `cd \\Mac\recall/sub`,
+		`pushd "%VMLAB_SYNC_DIR%"`:     `pushd "\\Mac\recall"`,
+		`$VMLAB_TARGET on $VMLAB_OS`:   `win on windows`,
+		`literal $ sign with no var`:   `literal $ sign with no var`,
+		`unknown $NOPE stays literal`:  `unknown $NOPE stays literal`,
+		`powershell $i preserved`:      `powershell $i preserved`,
+		`mixed $VMLAB_OS / %VMLAB_OS%`: `mixed windows / windows`,
 	}
 	for in, want := range cases {
 		if got := rt.substitute(in); got != want {

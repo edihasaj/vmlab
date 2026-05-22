@@ -14,12 +14,13 @@ import (
 // emit targets pointing at this transport once the box is reachable.
 //
 // Settings:
-//   ssh.host        required
-//   ssh.user        defaults to "root"
-//   ssh.port        defaults to "22"
-//   ssh.identity    path to private key (optional, may be in agent)
-//   ssh.knownHosts  path to known_hosts file (optional, pins host keys)
-//   ssh.strictHost  default "yes" — flip to "accept-new" for first-contact
+//
+//	ssh.host        required
+//	ssh.user        defaults to "root"
+//	ssh.port        defaults to "22"
+//	ssh.identity    path to private key (optional, may be in agent)
+//	ssh.knownHosts  path to known_hosts file (optional, pins host keys)
+//	ssh.strictHost  default "yes" — flip to "accept-new" for first-contact
 type sshTransport struct{}
 
 // NewSSH returns the ssh transport.
@@ -174,4 +175,3 @@ func sshDialArgs(t target.Target) []string {
 	args = append(args, fmt.Sprintf("%s@%s", sshUser(t), host), "--")
 	return args
 }
-

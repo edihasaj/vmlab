@@ -17,9 +17,9 @@ func TestMatchWhen(t *testing.T) {
 		{expr: "os=linux,arch=arm64", os: "linux", arch: "arm64", want: true},
 		{expr: "os=linux,arch=arm64", os: "linux", arch: "amd64", want: false},
 		{expr: " os = linux , arch = arm64 ", os: "linux", arch: "arm64", want: true},
-		{expr: "os=mac", os: "darwin", want: true},  // mac → darwin alias
+		{expr: "os=mac", os: "darwin", want: true}, // mac → darwin alias
 		{expr: "os=macos", os: "darwin", want: true},
-		{expr: "", os: "linux", want: true},          // empty matches everything
+		{expr: "", os: "linux", want: true},           // empty matches everything
 		{expr: "os=linux,,", os: "linux", want: true}, // blank clauses tolerated
 		{expr: "foo=bar", os: "linux", wantErr: true},
 		{expr: "os", os: "linux", wantErr: true},

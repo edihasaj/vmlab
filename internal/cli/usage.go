@@ -28,8 +28,8 @@ type usageRow struct {
 
 func newUsageCmd() *cobra.Command {
 	var (
-		asJSON bool
-		since  time.Duration
+		asJSON  bool
+		since   time.Duration
 		groupBy string
 	)
 	c := &cobra.Command{

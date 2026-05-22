@@ -130,8 +130,8 @@ func handleUsage(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 	}
 
 	type row struct {
-		Provider, Instance        string
-		Runs, Failures            int
+		Provider, Instance         string
+		Runs, Failures             int
 		UpMs, RunMs, DownMs, Total int64
 	}
 	agg := map[string]*row{}

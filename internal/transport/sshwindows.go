@@ -23,7 +23,7 @@ import (
 // To dodge layered Windows quoting entirely, the default shell is pwsh with
 // `-EncodedCommand` (UTF-16LE base64). The agent assembles one PowerShell
 // pipeline like `& 'arg0' 'arg1' …` with single-quote escaping (PowerShell's
-// rule is `''` for a literal single quote), encodes it, and ships it through
+// rule is `”` for a literal single quote), encodes it, and ships it through
 // ssh as a single inert token. No shell on either side gets a chance to
 // re-interpret special characters.
 //

@@ -147,15 +147,15 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 
 func TestSSHWindowsCmdQuoteCases(t *testing.T) {
 	cases := map[string]string{
-		"plain":             "plain",
-		"":                  `""`,
-		"has space":         `"has space"`,
-		`has "quotes"`:      `"has \"quotes\""`,
-		`mid\path`:          `mid\path`,         // no special chars -> verbatim
-		`a&b`:               `"a&b"`,
-		`a|b`:               `"a|b"`,
-		`trail back\\`:      `"trail back\\\\"`, // trailing \\ doubled inside quotes
-		`pre\"quote`:        `"pre\\\"quote"`,   // \ before " also doubled
+		"plain":        "plain",
+		"":             `""`,
+		"has space":    `"has space"`,
+		`has "quotes"`: `"has \"quotes\""`,
+		`mid\path`:     `mid\path`, // no special chars -> verbatim
+		`a&b`:          `"a&b"`,
+		`a|b`:          `"a|b"`,
+		`trail back\\`: `"trail back\\\\"`, // trailing \\ doubled inside quotes
+		`pre\"quote`:   `"pre\\\"quote"`,   // \ before " also doubled
 	}
 	for in, want := range cases {
 		if got := cmdQuote(in); got != want {

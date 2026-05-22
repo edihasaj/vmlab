@@ -127,12 +127,12 @@ type Snapshotter interface {
 
 // Snapshot is one saved checkpoint surfaced via ListSnapshots.
 type Snapshot struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Date     string `json:"date,omitempty"`
-	State    string `json:"state,omitempty"`
-	Current  bool   `json:"current,omitempty"`
-	Parent   string `json:"parent,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Date    string `json:"date,omitempty"`
+	State   string `json:"state,omitempty"`
+	Current bool   `json:"current,omitempty"`
+	Parent  string `json:"parent,omitempty"`
 }
 
 // OrphanSweeper is an optional capability for providers that can enumerate

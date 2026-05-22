@@ -22,7 +22,7 @@ type fakeTransport struct {
 	}
 }
 
-func (f *fakeTransport) Name() string             { return "fake" }
+func (f *fakeTransport) Name() string                 { return "fake" }
 func (f *fakeTransport) Capabilities() transport.Caps { return transport.Caps{Sync: true} }
 func (f *fakeTransport) Doctor(context.Context, target.Target) transport.Health {
 	return transport.Health{OK: true}
@@ -265,7 +265,7 @@ func TestRunArtifactStepMissingOutputFails(t *testing.T) {
 	srcDir := t.TempDir()
 	spec := &ArtifactSpec{
 		Src:       srcDir,
-		Build:     map[string]string{"linux": "true"},                                     // succeeds but produces nothing
+		Build:     map[string]string{"linux": "true"},                                    // succeeds but produces nothing
 		Output:    map[string]string{"linux": filepath.Join(t.TempDir(), "never-built")}, // path doesn't exist
 		DeliverTo: "/opt/x/",
 	}

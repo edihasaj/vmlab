@@ -121,8 +121,8 @@ func TestRegistryGetUnknown(t *testing.T) {
 
 type stubProv struct{ name string }
 
-func (s *stubProv) Name() string                                 { return s.name }
-func (s *stubProv) Doctor(_ context.Context, _ Instance) Health  { return Health{OK: true} }
+func (s *stubProv) Name() string                                { return s.name }
+func (s *stubProv) Doctor(_ context.Context, _ Instance) Health { return Health{OK: true} }
 func (s *stubProv) Status(_ context.Context, _ Instance) (State, error) {
 	return StateUnknown, nil
 }
