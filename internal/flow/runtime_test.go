@@ -1,8 +1,11 @@
 package flow
 
 import (
+	"encoding/base64"
 	"reflect"
+	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -52,13 +55,30 @@ func TestWrapForExec_NoWorkdirNoEnvIsPassThrough(t *testing.T) {
 	}
 }
 
-func TestWrapForBackground_WindowsUsesStartCmdC(t *testing.T) {
+func TestWrapForBackground_WindowsUsesEncodedPowerShell(t *testing.T) {
 	tgt := target.Target{Name: "w", Transport: "parallels-guest"}
-	line := `set "X=y" && pushd "C:\work" && node daemon.js > "out.log" 2> "err.log"`
+	line := `pushd "C:\work" && node daemon.js > out.log 2> err.log`
 	got := wrapForBackground(tgt, line)
-	want := `start "" /B cmd.exe /c "set ""X=y"" && pushd ""C:\work"" && node daemon.js > ""out.log"" 2> ""err.log"""`
-	if got != want {
-		t.Fatalf("windows bg wrap mismatch\n got: %q\nwant: %q", got, want)
+	const prefix = "powershell -NoProfile -EncodedCommand "
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("expected %q prefix, got %q", prefix, got)
+	}
+	// Decode the base64 + UTF-16 payload and verify the inner line round-trips.
+	dec, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(got, prefix))
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+	if len(dec)%2 != 0 {
+		t.Fatalf("UTF-16 payload not even-byte-aligned: len=%d", len(dec))
+	}
+	u16 := make([]uint16, len(dec)/2)
+	for i := range u16 {
+		u16[i] = uint16(dec[2*i]) | uint16(dec[2*i+1])<<8
+	}
+	decoded := string(utf16.Decode(u16))
+	want := `Start-Process -WindowStyle Hidden -FilePath cmd.exe -ArgumentList @('/c', 'pushd "C:\work" && node daemon.js > out.log 2> err.log')`
+	if decoded != want {
+		t.Fatalf("decoded payload mismatch\n got: %q\nwant: %q", decoded, want)
 	}
 }
 

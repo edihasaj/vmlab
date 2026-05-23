@@ -1,7 +1,9 @@
 package flow
 
 import (
+	"encoding/base64"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -167,11 +169,17 @@ func wrapForExec(t target.Target, cmd, workdir string, env map[string]string) st
 // wrapForBackground detaches the wrapped command line so the transport's Run
 // returns as soon as the child is spawned. Used by `background: true` steps.
 //
-// Windows: `start "" /B cmd.exe /c "<line>"` — empty title is required for
-// `start` to treat the next token as the command and not the title. The
-// inner cmd.exe /c handles redirects inside <line> (`> log 2> err`) which
-// `start /B` alone wouldn't honour. Embedded `"` in <line> is escaped to
-// `""` so cmd.exe parses the inner string correctly.
+// Windows: PowerShell `Start-Process -WindowStyle Hidden` gives the child a
+// fresh detached console — none of the parent's stdio handles are inherited,
+// so the SSH / prlctl connection that ran vmlab returns immediately even if
+// the child runs for hours. The simpler `start "" /B` route doesn't work
+// here: `start /B` keeps the parent's handles, and the outer cmd.exe /c
+// waits for them to close.
+//
+// To avoid the four-layer quoting nightmare (vmlab → cmd.exe → powershell →
+// inner cmd.exe), we UTF-16-LE-base64 the whole PowerShell statement and
+// pass it via -EncodedCommand. Base64 is A-Z/a-z/0-9/+ // = only, so no
+// metacharacters survive to confuse cmd.exe at the outer hop.
 //
 // POSIX: `(<line>) &` — subshell + `&`. We don't add `nohup` because the
 // typical vmlab usage starts a daemon, probes it, then kills it within the
@@ -179,8 +187,17 @@ func wrapForExec(t target.Target, cmd, workdir string, env map[string]string) st
 // Callers wanting longer detach can prepend `nohup ` to their own command.
 func wrapForBackground(t target.Target, line string) string {
 	if t.OSKind() == "windows" {
-		escaped := strings.ReplaceAll(line, `"`, `""`)
-		return `start "" /B cmd.exe /c "` + escaped + `"`
+		// PowerShell single-quoted string: literal `'` becomes `''`.
+		psLine := strings.ReplaceAll(line, "'", "''")
+		ps := "Start-Process -WindowStyle Hidden -FilePath cmd.exe -ArgumentList @('/c', '" + psLine + "')"
+		// UTF-16 LE → base64 for `powershell -EncodedCommand`.
+		u16 := utf16.Encode([]rune(ps))
+		buf := make([]byte, 2*len(u16))
+		for i, r := range u16 {
+			buf[2*i] = byte(r)
+			buf[2*i+1] = byte(r >> 8)
+		}
+		return "powershell -NoProfile -EncodedCommand " + base64.StdEncoding.EncodeToString(buf)
 	}
 	return "(" + line + ") &"
 }
