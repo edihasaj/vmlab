@@ -40,6 +40,37 @@ func runExternal(ctx context.Context, name string, args []string, stdout, stderr
 	return res, err
 }
 
+// runExternalStdin is the runExternal variant that wires a Reader into the
+// child's stdin. Used when a transport wants to push structured input (a
+// JSON plan, a flow body) without staging it on disk.
+func runExternalStdin(ctx context.Context, name string, args []string, stdin io.Reader, stdout, stderr io.Writer) (Result, error) {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	start := time.Now()
+	c := exec.CommandContext(ctx, name, args...)
+	c.Stdin = stdin
+	c.Stdout = stdout
+	c.Stderr = stderr
+	err := c.Run()
+	res := Result{Duration: time.Since(start).Milliseconds()}
+	if err == nil {
+		return res, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		res.ExitCode = ee.ExitCode()
+		return res, nil
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return res, fmt.Errorf("%s: not found on PATH (install it or expose via PATH)", name)
+	}
+	return res, err
+}
+
 // shellInteractive replaces stdin/stdout/stderr with the parent process so the
 // invoked binary takes over the terminal (used for `vmlab shell`).
 func shellInteractive(ctx context.Context, name string, args []string) error {

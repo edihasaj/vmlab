@@ -1,0 +1,53 @@
+name: um-smoke
+# End-to-end smoke for the undermouse transport. Exercises um's headless
+# surface through vmlab's gui: contract — capture context, ask a question,
+# optionally screenshot.
+#
+# Defaults run offline (no API key required): `um ask` falls back to a
+# canned response. To exercise the real OpenAI Responses streaming path,
+# export OPENAI_API_KEY before invoking vmlab.
+#
+# Run:
+#   vmlab run mac-local-um examples/flows/um-smoke.yaml --verbose
+#
+# Opt into the screenshot row after granting Screen Recording to um:
+#   VMLAB_GUI_SCREENSHOT=1 vmlab run mac-local-um examples/flows/um-smoke.yaml
+steps:
+  - name: ensure evidence dir
+    run: mkdir -p /tmp/vmlab-um
+
+  - name: bring TextEdit to the foreground
+    run: osascript -e 'tell application "TextEdit" to activate' -e 'delay 0.4'
+
+  - name: settle
+    gui:
+      kind: wait
+      extra:
+        milliseconds: 500
+
+  - name: capture desktop context as JSON
+    gui:
+      kind: context
+      path: /tmp/vmlab-um/context.json
+
+  - name: assert context captured
+    assert: 'test -s /tmp/vmlab-um/context.json'
+
+  - name: ask um a tiny question (offline fallback works)
+    gui:
+      kind: ask
+      text: "Say hi in five words."
+      path: /tmp/vmlab-um/ask.txt
+
+  - name: assert ask wrote something
+    assert: 'test -s /tmp/vmlab-um/ask.txt'
+
+  - when: env=VMLAB_GUI_SCREENSHOT
+    name: capture screenshot via um (requires Screen Recording TCC)
+    gui:
+      kind: screenshot
+      path: /tmp/vmlab-um/shot.png
+
+  - when: env=VMLAB_GUI_SCREENSHOT
+    name: assert screenshot landed
+    assert: 'test -s /tmp/vmlab-um/shot.png'

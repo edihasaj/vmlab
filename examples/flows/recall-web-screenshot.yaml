@@ -1,0 +1,31 @@
+name: recall-web-screenshot
+# TCC-free dashboard screenshot via abx (Playwright Chromium pixels). Use
+# this as the macOS row of the cross-OS verify when Screen Recording is
+# not granted — abx never touches the host's screen so the grant is moot.
+#
+# Run:
+#   vmlab run recall-web examples/flows/recall-web-screenshot.yaml --verbose
+#
+# Assumes the recall-web target exists (examples/targets/recall-web.yaml).
+steps:
+  - name: ensure evidence dir
+    run: mkdir -p /tmp/vmlab-web
+
+  - name: navigate
+    gui:
+      kind: open-url
+      path: https://recallmemory.dev/
+
+  - name: wait for the page to settle
+    gui:
+      kind: wait
+      extra:
+        milliseconds: 1500
+
+  - name: capture dashboard screenshot (no TCC needed)
+    gui:
+      kind: screenshot
+      path: /tmp/vmlab-web/recall-dashboard.png
+
+  - name: assert screenshot landed
+    assert: 'test -s /tmp/vmlab-web/recall-dashboard.png'
