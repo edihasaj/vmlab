@@ -236,21 +236,21 @@ func TestMaestroFlowPathMapsToTest(t *testing.T) {
 }
 
 func TestABXLiveMode(t *testing.T) {
+	// Live mode wraps gui: actions as `abx live <verb>` — drives the
+	// user's real Chrome via CDP. Run() shells out locally so it doesn't
+	// exercise the live wrap; we test via GUI() instead.
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "abx", 0)
 	withPath(t, dir)
 
 	tr := NewABX()
-	tgt := target.Target{Settings: map[string]any{"abx": map[string]any{"mode": "live", "url": "https://x"}}}
-	_, err := tr.Run(context.Background(), tgt, []string{"goto", "https://x"}, io.Discard, io.Discard)
-	if err != nil {
+	tgt := target.Target{Settings: map[string]any{"abx": map[string]any{"mode": "live"}}}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "open-url", Path: "https://x"}); err != nil {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
-	for _, want := range []string{"live", "--url", "https://x", "goto"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in argv: %s", want, got)
-		}
+	if !strings.Contains(got, "live goto https://x") {
+		t.Errorf("expected 'live goto https://x' in argv: %s", got)
 	}
 }
 
@@ -353,6 +353,94 @@ func TestGuiportWaitIsLocal(t *testing.T) {
 	}
 	if _, err := os.Stat(args); err == nil {
 		t.Fatal("wait must not invoke the guiport binary")
+	}
+}
+
+func TestABXGUIKinds(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "abx", 0)
+	withPath(t, dir)
+
+	tr := NewABX()
+	tgt := target.Target{}
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		action GUIAction
+		want   []string
+	}{
+		{
+			name:   "screenshot",
+			action: GUIAction{Kind: "screenshot", Path: "/tmp/web.png"},
+			want:   []string{"screenshot /tmp/web.png"},
+		},
+		{
+			name:   "click",
+			action: GUIAction{Kind: "click", Selector: "button[name='Save']"},
+			want:   []string{"click button[name='Save']"},
+		},
+		{
+			name:   "click-text",
+			action: GUIAction{Kind: "click-text", Text: "Sign in"},
+			want:   []string{"click text=Sign in"},
+		},
+		{
+			name:   "type",
+			action: GUIAction{Kind: "type", Text: "vmlab@example.com"},
+			want:   []string{"type vmlab@example.com"},
+		},
+		{
+			name:   "hotkey",
+			action: GUIAction{Kind: "hotkey", Text: "Enter"},
+			want:   []string{"press Enter"},
+		},
+		{
+			name:   "wait-selector",
+			action: GUIAction{Kind: "wait", Selector: ".loaded"},
+			want:   []string{"wait .loaded"},
+		},
+		{
+			name:   "observe",
+			action: GUIAction{Kind: "observe"},
+			want:   []string{"accessibility"},
+		},
+		{
+			name:   "open-url",
+			action: GUIAction{Kind: "open-url", Path: "https://recallmemory.dev"},
+			want:   []string{"goto https://recallmemory.dev"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tr.GUI(ctx, tgt, tc.action); err != nil {
+				t.Fatalf("GUI %s: %v", tc.action.Kind, err)
+			}
+			got := readLastArgs(t, args)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in argv: %s", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestABXWaitIsLocal(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "abx", 0)
+	withPath(t, dir)
+
+	tr := NewABX()
+	start := time.Now()
+	if err := tr.GUI(context.Background(), target.Target{}, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 100}}); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 90*time.Millisecond {
+		t.Fatalf("wait returned too fast (%s)", elapsed)
+	}
+	if _, err := os.Stat(args); err == nil {
+		t.Fatal("wait must not invoke the abx binary when no selector given")
 	}
 }
 
