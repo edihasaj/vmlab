@@ -34,10 +34,17 @@ func (m *maestroTransport) Doctor(ctx context.Context, t target.Target) Health {
 //   - cmd[0] is a maestro subcommand (test, record, hierarchy, ...)
 //   - cmd[0] ending in `.yaml` or `.yml` is treated as a flow file -> `maestro test`
 func (m *maestroTransport) Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {
-	args := maestroDeviceArgs(t)
 	if len(cmd) == 0 {
 		return Result{}, fmt.Errorf("maestro: empty command")
 	}
+	// run:/assert: arrive wrapped as `sh -lc <cmd>` — those are host
+	// shell commands, not maestro verbs. Execute them on the host so a
+	// flow can mix shell steps (mkdir, assert) with `exec:` maestro
+	// verbs against the same target. Same pattern as adb/simctl.
+	if IsHostShellArgv(cmd) {
+		return runExternal(ctx, cmd[0], cmd[1:], stdout, stderr)
+	}
+	args := maestroDeviceArgs(t)
 	if hasYAMLExt(cmd[0]) {
 		args = append(args, "test")
 		args = append(args, cmd...)
