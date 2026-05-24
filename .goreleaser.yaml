@@ -52,12 +52,33 @@ changelog:
       - '^chore:'
       - 'Merge pull request'
 
-# Homebrew tap publishing intentionally omitted until:
-#  1. vmlab repo goes public (so brew can read the tarballs), and
-#  2. a HOMEBREW_TAP_TOKEN secret is set in the vmlab repo (PAT with
-#     `contents:write` on edihasaj/homebrew-tap).
-# To re-enable: add a `brews:` (or `homebrew_casks:`) block pointing at
-# edihasaj/homebrew-tap and re-tag.
+# Homebrew tap publishing. Auto-pushes Formula/vmlab.rb to
+# edihasaj/homebrew-tap on every tag. Needs:
+#   1. HOMEBREW_TAP_TOKEN secret on the vmlab repo (PAT with
+#      contents:write on edihasaj/homebrew-tap), and
+#   2. either vmlab going public OR end users exporting
+#      HOMEBREW_GITHUB_API_TOKEN so brew can fetch the release tarball.
+# Goreleaser skips this step silently when HOMEBREW_TAP_TOKEN is
+# missing (skip_upload: auto), so unconfigured tag pushes still succeed.
+brews:
+  - name: vmlab
+    repository:
+      owner: edihasaj
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/edihasaj/vmlab"
+    description: "Transport-agnostic orchestrator for cross-OS verify loops."
+    license: "MIT"
+    commit_author:
+      name: goreleaser
+      email: noreply@edihasaj.com
+    install: |
+      bin.install "vmlab"
+    test: |
+      system "#{bin}/vmlab", "--version"
+    skip_upload: auto
 
 release:
   github:
