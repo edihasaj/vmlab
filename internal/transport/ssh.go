@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -133,12 +134,215 @@ func (s *sshTransport) Shell(ctx context.Context, t target.Target) error {
 	return shellInteractive(ctx, "ssh", args)
 }
 
+// Screenshot captures the remote X display via ImageMagick's `import` and
+// scp's it back to `path` on the host. Requires xdotool/imagemagick on
+// the guest and ssh.display set (e.g. ":99" for a headless Xvfb). The X
+// dependency keeps this off non-graphical Linux boxes; that's by design.
 func (s *sshTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	return fmt.Errorf("ssh: screenshot not supported")
+	if !haveBinary("ssh") {
+		return fmt.Errorf("ssh not on PATH")
+	}
+	display := sshDisplay(t)
+	remote := "/tmp/vmlab-ssh-shot.png"
+	// Use ImageMagick `import -window root` — works on every Xvfb/X11
+	// session, no compositor required. Quote $DISPLAY literally so the
+	// remote shell expands it.
+	cmd := fmt.Sprintf("DISPLAY=%s import -window root %s", display, remote)
+	args := append(sshDialArgs(t), cmd)
+	if _, err := runExternal(ctx, "ssh", args, io.Discard, io.Discard); err != nil {
+		return fmt.Errorf("ssh: remote screenshot failed: %w", err)
+	}
+	scpArgs := sshScpArgs(t, false)
+	scpArgs = append(scpArgs, fmt.Sprintf("%s@%s:%s", sshUser(t), t.SettingString("ssh", "host"), remote), path)
+	res, err := runExternal(ctx, "scp", scpArgs, io.Discard, io.Discard)
+	if err != nil {
+		return fmt.Errorf("ssh: scp back failed: %w", err)
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("ssh: scp exited %d", res.ExitCode)
+	}
+	return nil
 }
 
+// GUI drives a remote X11 desktop through xdotool + ImageMagick. The
+// guest must have xdotool, imagemagick, and a running X server (Xvfb or
+// real). `ssh.display` selects which display (default ":0" for a logged-
+// in desktop; ":99" is the convention for vmlab-managed Xvfb).
+//
+// Kinds covered:
+//   - screenshot — see Screenshot() above
+//   - click      — xdotool search by name, windowactivate, click 1
+//   - click-text — alias for click; xdotool searches by Name substring
+//   - click-at   — xdotool mousemove + click at raw coords
+//   - type       — xdotool type --delay 20
+//   - hotkey     — xdotool key <chord>; modifiers translated to xdotool names
+//   - wait       — host-side sleep
+//   - observe    — xdotool getactivewindow getwindowname
+//   - tree       — xdotool search --name "" (list of all windows)
+//   - open-url   — DISPLAY=… xdg-open <url>
 func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
-	return fmt.Errorf("ssh: gui not supported")
+	if a.Kind == "wait" {
+		ms := extraInt(a.Extra, "milliseconds")
+		if ms == 0 {
+			ms = extraInt(a.Extra, "ms")
+		}
+		if ms < 0 {
+			ms = 0
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+		}
+		return nil
+	}
+	if a.Kind == "screenshot" {
+		if a.Path == "" {
+			return fmt.Errorf("ssh gui screenshot requires path")
+		}
+		return s.Screenshot(ctx, t, a.Path)
+	}
+	display := sshDisplay(t)
+	cmd, err := xdoCmd(a, display)
+	if err != nil {
+		return err
+	}
+	args := append(sshDialArgs(t), cmd)
+	var errb strings.Builder
+	res, err := runExternal(ctx, "ssh", args, io.Discard, &errb)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		msg := strings.TrimSpace(errb.String())
+		if msg != "" {
+			return fmt.Errorf("ssh gui %s exited %d: %s", a.Kind, res.ExitCode, msg)
+		}
+		return fmt.Errorf("ssh gui %s exited %d", a.Kind, res.ExitCode)
+	}
+	return nil
+}
+
+// sshDisplay returns the X DISPLAY for GUI dispatch. Default ":0" for a
+// real logged-in desktop; set ssh.display=":99" for an Xvfb session.
+func sshDisplay(t target.Target) string {
+	if d := t.SettingString("ssh", "display"); d != "" {
+		return d
+	}
+	return ":0"
+}
+
+// sshScpArgs returns the per-target scp option prefix. Mirror sshDialArgs
+// but for scp's slightly different flag set (`-q` instead of `-o`-only).
+func sshScpArgs(t target.Target, recursive bool) []string {
+	args := []string{"-q", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=" + sshStrictHost(t)}
+	if id := t.SettingString("ssh", "identity"); id != "" {
+		args = append(args, "-i", id)
+	}
+	if port := t.SettingString("ssh", "port"); port != "" {
+		args = append(args, "-P", port)
+	}
+	if recursive {
+		args = append(args, "-r")
+	}
+	return args
+}
+
+func sshStrictHost(t target.Target) string {
+	if v := t.SettingString("ssh", "strictHost"); v != "" {
+		return v
+	}
+	return "yes"
+}
+
+// xdoCmd returns the remote shell command for a given GUI action.
+func xdoCmd(a GUIAction, display string) (string, error) {
+	prefix := fmt.Sprintf("DISPLAY=%s ", display)
+	switch a.Kind {
+	case "click":
+		if a.Selector == "" {
+			return "", fmt.Errorf("ssh gui click requires selector (window name or class)")
+		}
+		// xdotool tries name, then class, then classname. activate first
+		// match, then send a left-click.
+		return prefix + fmt.Sprintf(`bash -c 'w=$(xdotool search --name %[1]s 2>/dev/null | head -1); test -z "$w" && w=$(xdotool search --class %[1]s 2>/dev/null | head -1); test -z "$w" && w=$(xdotool search --classname %[1]s 2>/dev/null | head -1); test -n "$w" && xdotool windowactivate "$w" && xdotool click 1'`, shellSingleQuote(a.Selector)), nil
+	case "click-text":
+		if a.Text == "" {
+			return "", fmt.Errorf("ssh gui click-text requires text")
+		}
+		return prefix + fmt.Sprintf(`bash -c 'w=$(xdotool search --name %[1]s 2>/dev/null | head -1); test -z "$w" && w=$(xdotool search --class %[1]s 2>/dev/null | head -1); test -n "$w" && xdotool windowactivate "$w" && xdotool click 1'`, shellSingleQuote(a.Text)), nil
+	case "click-at":
+		return prefix + fmt.Sprintf("xdotool mousemove %d %d click 1", extraInt(a.Extra, "x"), extraInt(a.Extra, "y")), nil
+	case "type":
+		if a.Text == "" {
+			return "", fmt.Errorf("ssh gui type requires text")
+		}
+		return prefix + fmt.Sprintf("xdotool type --delay 20 %s", shellSingleQuote(a.Text)), nil
+	case "hotkey":
+		chord := a.Text
+		if chord == "" {
+			chord = a.Selector
+		}
+		if chord == "" {
+			return "", fmt.Errorf("ssh gui hotkey requires text (chord)")
+		}
+		return prefix + "xdotool key " + shellSingleQuote(chordToXdotool(chord)), nil
+	case "observe":
+		return prefix + `xdotool getactivewindow getwindowname 2>/dev/null && xdotool getactivewindow getwindowgeometry 2>/dev/null || echo "(no active window)"`, nil
+	case "tree":
+		return prefix + `xdotool search --name "." 2>/dev/null | while read w; do printf '%s %s\n' "$w" "$(xdotool getwindowname "$w" 2>/dev/null)"; done`, nil
+	case "open-url":
+		url := a.Path
+		if url == "" {
+			url = a.Text
+		}
+		if url == "" {
+			return "", fmt.Errorf("ssh gui open-url requires path or text")
+		}
+		return prefix + "xdg-open " + shellSingleQuote(url), nil
+	}
+	return "", fmt.Errorf("ssh: unsupported gui kind %q", a.Kind)
+}
+
+// chordToXdotool maps the cross-platform chord syntax to xdotool's
+// modifier+key shape. xdotool accepts "ctrl+c" natively for most chords
+// and uses "Return"/"Tab"/"Escape"/etc. for special keys.
+func chordToXdotool(chord string) string {
+	parts := strings.Split(strings.ToLower(chord), "+")
+	if len(parts) == 0 {
+		return chord
+	}
+	for i, p := range parts {
+		switch p {
+		case "cmd", "command":
+			parts[i] = "super" // Cmd → Super on Linux
+		case "option", "opt":
+			parts[i] = "alt"
+		case "enter", "return":
+			parts[i] = "Return"
+		case "esc", "escape":
+			parts[i] = "Escape"
+		case "tab":
+			parts[i] = "Tab"
+		case "space":
+			parts[i] = "space"
+		case "bksp", "backspace":
+			parts[i] = "BackSpace"
+		case "del", "delete":
+			parts[i] = "Delete"
+		case "up", "down", "left", "right":
+			parts[i] = strings.Title(p)
+		}
+	}
+	return strings.Join(parts, "+")
+}
+
+// shellSingleQuote wraps s in POSIX single quotes, escaping any embedded
+// single quotes. Used for remote ssh commands so the inner argv survives
+// the shell layer.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sshUser returns the configured user or "root".

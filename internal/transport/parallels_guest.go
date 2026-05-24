@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -289,8 +290,250 @@ func (p *parallelsGuestTransport) Screenshot(ctx context.Context, t target.Targe
 	return nil
 }
 
+// GUI drives the guest desktop through PowerShell scripts that call into
+// Windows' built-in UI Automation (UIAutomationClient / UIAutomationTypes)
+// and SendKeys. No extra dependency on the guest — everything we need
+// ships with .NET on Windows 10/11 (both x64 and ARM64).
+//
+// Kinds covered:
+//   - screenshot — captures the desktop into a PNG inside the guest, then
+//     pulls it back to the host path via prlctl-shared-folder scp fallback.
+//   - click      — finds an element by AutomationId or Name and invokes it
+//     via the UIA InvokePattern (falls back to mouse coords if needed).
+//   - click-text — clicks the first element whose Name contains the text.
+//   - type       — types into the currently focused element via SendKeys.
+//   - hotkey     — sends a SendKeys chord (e.g. "^c" for Ctrl+C, "%{F4}").
+//   - observe    — emits frontmost window + focused element as JSON.
+//   - tree       — dumps the UIA element tree of the foreground window.
+//   - wait       — host-side sleep (same model as guiport).
+//   - open-url   — `Start-Process <url>`.
+//
+// The script is delivered via PowerShell -EncodedCommand so embedded
+// quotes survive the ssh→prlctl→cmd.exe layered quoting.
 func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
-	return fmt.Errorf("parallels-guest: gui not supported")
+	if a.Kind == "wait" {
+		ms := extraInt(a.Extra, "milliseconds")
+		if ms == 0 {
+			ms = extraInt(a.Extra, "ms")
+		}
+		if ms < 0 {
+			ms = 0
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+		}
+		return nil
+	}
+
+	// screenshot has its own dedicated path because the PNG must come
+	// back to the host. Use the existing prlctl capture path which we
+	// know handles the round-trip.
+	if a.Kind == "screenshot" {
+		if a.Path == "" {
+			return fmt.Errorf("parallels-guest gui screenshot requires path")
+		}
+		return p.Screenshot(ctx, t, a.Path)
+	}
+
+	script, err := winuiScript(a)
+	if err != nil {
+		return err
+	}
+	// Encode the PowerShell payload as UTF-16LE base64 (the -EncodedCommand
+	// contract) to sidestep ssh→prlctl→cmd→powershell quoting.
+	encoded := encodePowerShell(script)
+	argv := []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded}
+
+	vm := t.SettingString("parallels", "vm")
+	if vm == "" {
+		return fmt.Errorf("parallels-guest: parallels.vm is required")
+	}
+	args, err := prlctlArgs(t, append([]string{"exec", vm}, argv...))
+	if err != nil {
+		return err
+	}
+	var errb strings.Builder
+	res, err := runExternal(ctx, args[0], args[1:], io.Discard, &errb)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		msg := strings.TrimSpace(errb.String())
+		if msg != "" {
+			return fmt.Errorf("parallels-guest gui %s exited %d: %s", a.Kind, res.ExitCode, msg)
+		}
+		return fmt.Errorf("parallels-guest gui %s exited %d", a.Kind, res.ExitCode)
+	}
+	return nil
+}
+
+// winuiScript returns the PowerShell payload that performs the requested
+// GUI action on the Windows guest using built-in UI Automation APIs.
+// Each kind is a self-contained script (no shared helpers needed) so the
+// EncodedCommand round-trips cleanly.
+func winuiScript(a GUIAction) (string, error) {
+	const prelude = `$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+function Find-ByText([string]$needle) {
+  $root = [Windows.Automation.AutomationElement]::RootElement
+  $cond = New-Object Windows.Automation.OrCondition @(
+    (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, $needle)),
+    (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, $needle))
+  )
+  return $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $cond)
+}
+`
+	switch a.Kind {
+	case "click":
+		if a.Selector == "" {
+			return "", fmt.Errorf("parallels-guest gui click requires selector (AutomationId or Name)")
+		}
+		return prelude + fmt.Sprintf(`$el = Find-ByText %q
+if (-not $el) { throw "no element matching %q" }
+$pat = $null
+if ($el.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) {
+  $pat.Invoke()
+} elseif ($el.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern, [ref]$pat)) {
+  $pat.Toggle()
+} else {
+  $r = $el.Current.BoundingRectangle
+  [System.Windows.Forms.Cursor]::Position = New-Object Drawing.Point ([int]($r.X + $r.Width/2)), ([int]($r.Y + $r.Height/2))
+  Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);' -Name U32 -Namespace W
+  [W.U32]::mouse_event(0x2, 0, 0, 0, 0); [W.U32]::mouse_event(0x4, 0, 0, 0, 0)
+}`, a.Selector, a.Selector), nil
+	case "click-text":
+		if a.Text == "" {
+			return "", fmt.Errorf("parallels-guest gui click-text requires text")
+		}
+		// Substring Name match — broader than Find-ByText's exact-match.
+		return prelude + fmt.Sprintf(`$root = [Windows.Automation.AutomationElement]::RootElement
+$walker = [Windows.Automation.TreeWalker]::ControlViewWalker
+$found = $null
+$queue = New-Object 'System.Collections.Queue'
+$queue.Enqueue($root)
+while ($queue.Count -gt 0 -and -not $found) {
+  $cur = $queue.Dequeue()
+  $name = $cur.Current.Name
+  if ($name -and $name.Contains(%q)) { $found = $cur; break }
+  $child = $walker.GetFirstChild($cur)
+  while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
+}
+if (-not $found) { throw "no element with Name containing %q" }
+$pat = $null
+if ($found.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { $pat.Invoke() }
+else { throw "element does not support InvokePattern" }`, a.Text, a.Text), nil
+	case "type":
+		if a.Text == "" {
+			return "", fmt.Errorf("parallels-guest gui type requires text")
+		}
+		// prlctl exec runs outside the interactive desktop session, so
+		// raw SendKeys fails with UIPI "Access is denied". UIA's
+		// ValuePattern.SetValue writes through the accessibility layer —
+		// it doesn't require desktop input privilege. The focused control
+		// must support ValuePattern (most text inputs do; some custom
+		// controls don't).
+		return prelude + fmt.Sprintf(`$el = [Windows.Automation.AutomationElement]::FocusedElement
+if (-not $el) { throw "no focused element" }
+$pat = $null
+if ($el.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pat)) {
+  $pat.SetValue(%q)
+} else {
+  throw "focused element does not support ValuePattern; can't type without an interactive session"
+}`, a.Text), nil
+	case "hotkey":
+		chord := a.Text
+		if chord == "" {
+			chord = a.Selector
+		}
+		if chord == "" {
+			return "", fmt.Errorf("parallels-guest gui hotkey requires text (chord)")
+		}
+		return prelude + fmt.Sprintf(`[System.Windows.Forms.SendKeys]::SendWait(%q)`, chordToSendKeys(chord)), nil
+	case "observe":
+		return prelude + `$fg = [Windows.Automation.AutomationElement]::FocusedElement
+if (-not $fg) { $fg = [Windows.Automation.AutomationElement]::RootElement }
+$p = $fg.Current
+[pscustomobject]@{name=$p.Name; class=$p.ClassName; type=$p.ControlType.ProgrammaticName; id=$p.AutomationId; rect="$($p.BoundingRectangle)"} | ConvertTo-Json`, nil
+	case "tree":
+		return prelude + `$root = [Windows.Automation.AutomationElement]::FocusedElement
+if (-not $root) { $root = [Windows.Automation.AutomationElement]::RootElement }
+function Dump-Tree($el, $depth) {
+  if ($depth -gt 4) { return }
+  $p = $el.Current
+  ("  " * $depth) + "$($p.ControlType.ProgrammaticName) name=$($p.Name) id=$($p.AutomationId)" | Write-Output
+  $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
+  $child = $walker.GetFirstChild($el)
+  while ($child) { Dump-Tree $child ($depth + 1); $child = $walker.GetNextSibling($child) }
+}
+Dump-Tree $root 0`, nil
+	case "open-url":
+		url := a.Path
+		if url == "" {
+			url = a.Text
+		}
+		if url == "" {
+			return "", fmt.Errorf("parallels-guest gui open-url requires path or text")
+		}
+		return prelude + fmt.Sprintf(`Start-Process %q`, url), nil
+	}
+	return "", fmt.Errorf("parallels-guest: unsupported gui kind %q", a.Kind)
+}
+
+// chordToSendKeys maps the cross-platform chord syntax (cmd+shift+t,
+// ctrl+a, etc.) to the SendKeys notation (^a, +%{F4}). Modifiers only —
+// the key portion passes through. On Windows, `cmd` is aliased to `win`
+// which SendKeys can't send directly; we use `^` for Ctrl which is what
+// 99% of Windows shortcuts actually use.
+func chordToSendKeys(chord string) string {
+	parts := strings.Split(strings.ToLower(chord), "+")
+	if len(parts) == 0 {
+		return chord
+	}
+	key := parts[len(parts)-1]
+	mods := parts[:len(parts)-1]
+	var prefix string
+	for _, m := range mods {
+		switch m {
+		case "ctrl", "control", "cmd", "command":
+			prefix += "^"
+		case "shift":
+			prefix += "+"
+		case "alt", "option", "opt":
+			prefix += "%"
+		}
+	}
+	// Map common keys to SendKeys' brace syntax.
+	switch key {
+	case "enter", "return":
+		key = "{ENTER}"
+	case "esc", "escape":
+		key = "{ESC}"
+	case "tab":
+		key = "{TAB}"
+	case "space":
+		key = " "
+	case "backspace", "bksp":
+		key = "{BS}"
+	case "delete", "del":
+		key = "{DEL}"
+	case "up":
+		key = "{UP}"
+	case "down":
+		key = "{DOWN}"
+	case "left":
+		key = "{LEFT}"
+	case "right":
+		key = "{RIGHT}"
+	default:
+		if len(key) > 1 {
+			// f1..f24, etc.
+			key = "{" + strings.ToUpper(key) + "}"
+		}
+	}
+	return prefix + key
 }
 
 // sshOpts returns the -o / -i flags this transport always uses when SSHing
