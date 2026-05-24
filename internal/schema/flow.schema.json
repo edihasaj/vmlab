@@ -96,7 +96,13 @@
                   "tree",
                   "wait",
                   "run",
-                  "run-flow"
+                  "run-flow",
+                  "open-url",
+                  "context",
+                  "capture",
+                  "ask",
+                  "summarize",
+                  "rewrite"
                 ]
               },
               "selector": { "type": "string" },
