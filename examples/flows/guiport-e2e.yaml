@@ -19,8 +19,8 @@ steps:
   - name: ensure shot dir
     run: mkdir -p /tmp/vmlab-gui
 
-  - name: bring TextEdit to the foreground via the host shell
-    run: osascript -e 'tell application "TextEdit" to activate' -e 'delay 0.5'
+  - name: bring TextEdit to the foreground with a fresh document
+    run: osascript -e 'tell application "TextEdit"' -e 'activate' -e 'make new document' -e 'end tell' -e 'delay 0.5'
 
   - name: settle
     gui:
