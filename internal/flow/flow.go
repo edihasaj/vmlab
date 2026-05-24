@@ -378,8 +378,14 @@ func pickInstall(m map[string]string, osKind string) (string, bool) {
 }
 
 // matchWhen evaluates a comma-separated AND list of key=value / key!=value
-// clauses. Supported keys: `os`, `arch`. Unknown keys return an error so
-// typos surface fast instead of silently making the step always-skip.
+// clauses. Supported keys: `os`, `arch`, `env`. Unknown keys return an
+// error so typos surface fast instead of silently making the step
+// always-skip.
+//
+// The `env` key is special-cased: `env=NAME` is true iff $NAME is set to a
+// non-empty value on the host; `env!=NAME` is the inverse. Use it to gate
+// steps that need a host-side opt-in (e.g. a step that produces a real
+// screenshot and only makes sense once Screen Recording TCC is granted).
 func matchWhen(expr, osKind, arch string) (bool, error) {
 	for _, raw := range strings.Split(expr, ",") {
 		clause := strings.TrimSpace(raw)
@@ -413,8 +419,28 @@ func matchWhen(expr, osKind, arch string) (bool, error) {
 			}
 		case "arch":
 			actual = arch
+		case "env":
+			// `env=NAME` matches when $NAME is set to a non-empty value.
+			// Treat "set/non-empty" as the actual value the equality below
+			// checks against — that way `env=NAME` (truthy check) and
+			// `env!=NAME` (must be unset) both work via the same code path.
+			present := os.Getenv(want) != ""
+			if present {
+				actual = want
+			}
+			// We've already encoded the comparison in `present`; short-circuit
+			// the generic eq path below so the user's `want` doesn't have to
+			// equal itself by accident.
+			eq := present
+			if neg && eq {
+				return false, nil
+			}
+			if !neg && !eq {
+				return false, nil
+			}
+			continue
 		default:
-			return false, fmt.Errorf("clause %q: unknown key (allowed: os, arch)", clause)
+			return false, fmt.Errorf("clause %q: unknown key (allowed: os, arch, env)", clause)
 		}
 		eq := actual == want
 		if neg && eq {

@@ -153,6 +153,20 @@ Supported `kind`s map to guiport verbs: `click`, `click-text`, `click-at`,
 runnable demo and `examples/flows/recall-cross-os.yaml` for a cross-OS
 flow (linux + windows + mac, single junit.xml).
 
+#### Gating steps on environment
+
+`when:` now accepts `env=NAME` and `env!=NAME` clauses alongside `os=` and
+`arch=`. Use this to make a step opt-in via an env var — handy for actions
+that need a TCC grant the rest of the flow doesn't:
+
+```yaml
+# Only runs when invoked as VMLAB_GUI_SCREENSHOT=1 vmlab run ...
+- when: env=VMLAB_GUI_SCREENSHOT
+  gui: { kind: screenshot, path: /tmp/shot.png }
+- when: env=VMLAB_GUI_SCREENSHOT
+  assert: 'test -s /tmp/shot.png'
+```
+
 ## MCP for agents
 
 ```sh

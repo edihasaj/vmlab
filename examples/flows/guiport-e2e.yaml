@@ -1,14 +1,20 @@
 name: guiport-e2e
 # End-to-end smoke for the guiport transport. Drives the local Mac through
-# the new gui: step type — open an app, type, screenshot, assert.
+# the new gui: step type — open an app, observe, type, optionally
+# screenshot, assert.
 #
-# Run with:
+# Default run is fully green if AX is granted to guiport (Screen Recording
+# not required):
 #   vmlab run mac-local-gui examples/flows/guiport-e2e.yaml --verbose
+#
+# Opt into the screenshot variant once Screen Recording is granted:
+#   VMLAB_GUI_SCREENSHOT=1 vmlab run mac-local-gui \
+#     examples/flows/guiport-e2e.yaml --verbose
 #
 # Prereqs:
 #   - guiport on PATH (`guiport doctor`)
-#   - Accessibility + Screen Recording granted to the terminal launching vmlab
-#     (or to guiport itself if running standalone)
+#   - Accessibility granted to the terminal launching vmlab (or guiport)
+#   - Screen Recording granted ONLY for the screenshot opt-in
 steps:
   - name: ensure shot dir
     run: mkdir -p /tmp/vmlab-gui
@@ -31,10 +37,12 @@ steps:
       kind: type
       text: "hello vmlab — $VMLAB_TARGET"
 
-  - name: capture screenshot
+  - when: env=VMLAB_GUI_SCREENSHOT
+    name: capture screenshot (opt-in; requires Screen Recording TCC)
     gui:
       kind: screenshot
       path: /tmp/vmlab-gui/shot.png
 
-  - name: assert screenshot landed
+  - when: env=VMLAB_GUI_SCREENSHOT
+    name: assert screenshot landed
     assert: 'test -s /tmp/vmlab-gui/shot.png'
