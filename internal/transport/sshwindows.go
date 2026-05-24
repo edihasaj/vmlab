@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/edihasaj/vmlab/internal/target"
@@ -213,14 +214,63 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 	return nil
 }
 
+// GUI drives Windows UI through PowerShell + UIA / SendKeys over SSH.
+// Unlike parallels-guest's GUI() (which runs out-of-session and trips UIPI),
+// OpenSSH on Windows attaches to the logged-in user's interactive desktop
+// session, so SendKeys + ValuePattern actually work. Verbs map to UIA
+// patterns where possible and fall back to SendKeys for input.
+//
+// Kinds covered:
+//   - screenshot — captures the desktop via System.Drawing.Bitmap; same path
+//     as Screenshot() above, just routed through GUIAction.Path.
+//   - click      — UIA InvokePattern on element matching AutomationId/Name
+//   - click-text — UIA tree walk by Name substring, then Invoke
+//   - type       — System.Windows.Forms.SendKeys (works in-session)
+//   - hotkey     — SendKeys chord (cross-platform syntax translated)
+//   - wait       — transport-side sleep
+//   - observe    — focused window/element metadata as JSON
+//   - tree       — top-N child UIA elements of the foreground window
+//   - open-url   — Start-Process <url>
 func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
-	// GUI driving on Windows belongs in a dedicated transport (a future
-	// `winappdriver` adapter, or UI Automation over SSH). For now, the only
-	// kind we can satisfy in-process is `screenshot`.
+	if a.Kind == "wait" {
+		ms := extraInt(a.Extra, "milliseconds")
+		if ms == 0 {
+			ms = extraInt(a.Extra, "ms")
+		}
+		if ms < 0 {
+			ms = 0
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(ms) * time.Millisecond):
+		}
+		return nil
+	}
 	if a.Kind == "screenshot" {
 		return s.Screenshot(ctx, t, a.Path)
 	}
-	return fmt.Errorf("ssh-windows: gui kind %q not supported (use a Windows GUI driver such as UIA / WinAppDriver)", a.Kind)
+	script, err := winuiScript(a)
+	if err != nil {
+		return err
+	}
+	enc := encodePowerShell("& { " + script + " }")
+	dial := winSSHDialArgs(t, false)
+	remoteCmd := "powershell -NoProfile -NonInteractive -EncodedCommand " + enc
+	sshArgs := append(dial, remoteCmd)
+	var errb strings.Builder
+	res, err := runExternal(ctx, "ssh", sshArgs, io.Discard, &errb)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		msg := strings.TrimSpace(errb.String())
+		if msg != "" {
+			return fmt.Errorf("ssh-windows gui %s exited %d: %s", a.Kind, res.ExitCode, msg)
+		}
+		return fmt.Errorf("ssh-windows gui %s exited %d", a.Kind, res.ExitCode)
+	}
+	return nil
 }
 
 // winShell returns the configured Windows-side shell choice.
