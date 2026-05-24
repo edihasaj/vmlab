@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -264,10 +265,94 @@ func TestGuiportClick(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
-	for _, want := range []string{"--app", "Calculator", "--strict", "click", "AXButton[title=9]"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in argv: %s", want, got)
-		}
+	// guiport CLI takes --app and --strict as per-subcommand flags after the verb.
+	if !strings.Contains(got, "click AXButton[title=9] --app Calculator --strict") {
+		t.Errorf("unexpected argv: %s", got)
+	}
+}
+
+func TestGuiportExpandedKinds(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "guiport", 0)
+	withPath(t, dir)
+
+	tr := NewGuiport()
+	tgt := target.Target{Settings: map[string]any{"guiport": map[string]any{"app": "TextEdit"}}}
+	ctx := context.Background()
+
+	cases := []struct {
+		name   string
+		action GUIAction
+		want   []string
+	}{
+		{
+			name:   "click-text",
+			action: GUIAction{Kind: "click-text", Text: "Save"},
+			want:   []string{"click-text Save --app TextEdit"},
+		},
+		{
+			name:   "click-at",
+			action: GUIAction{Kind: "click-at", Extra: map[string]any{"x": 120, "y": 240}},
+			want:   []string{"click-at 120 240"},
+		},
+		{
+			name:   "type-no-app-flag",
+			action: GUIAction{Kind: "type", Text: "hello"},
+			want:   []string{"type hello"},
+		},
+		{
+			name:   "hotkey-via-text",
+			action: GUIAction{Kind: "hotkey", Text: "cmd+space"},
+			want:   []string{"hotkey cmd+space"},
+		},
+		{
+			name:   "hotkey-via-selector-fallback",
+			action: GUIAction{Kind: "hotkey", Selector: "cmd+shift+4"},
+			want:   []string{"hotkey cmd+shift+4"},
+		},
+		{
+			name:   "observe",
+			action: GUIAction{Kind: "observe"},
+			want:   []string{"observe --app TextEdit"},
+		},
+		{
+			name:   "tree",
+			action: GUIAction{Kind: "tree"},
+			want:   []string{"tree --app TextEdit"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tr.GUI(ctx, tgt, tc.action); err != nil {
+				t.Fatalf("GUI %s: %v", tc.action.Kind, err)
+			}
+			got := readLastArgs(t, args)
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in argv: %s", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestGuiportWaitIsLocal(t *testing.T) {
+	// `wait` must not call out to guiport — it's a transport-side sleep.
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "guiport", 0)
+	withPath(t, dir)
+
+	tr := NewGuiport()
+	tgt := target.Target{}
+	start := time.Now()
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 120}}); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("wait returned too fast (%s); expected >=100ms", elapsed)
+	}
+	if _, err := os.Stat(args); err == nil {
+		t.Fatal("wait must not invoke the guiport binary")
 	}
 }
 

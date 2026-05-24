@@ -284,10 +284,7 @@ func printPlan(w io.Writer, selectorArg string, ts []target.Target, f *flow.Flow
 	if f != nil {
 		plan.Flow = f.SourceFile
 		for i, s := range f.Steps {
-			kind, cmd := "run", s.Run
-			if s.Assert != "" {
-				kind, cmd = "assert", s.Assert
-			}
+			kind, cmd := summarizeStep(s)
 			plan.Steps = append(plan.Steps, planStep{Index: i, Kind: kind, Cmd: cmd})
 		}
 	} else {
@@ -314,6 +311,63 @@ func printPlan(w io.Writer, selectorArg string, ts []target.Target, f *flow.Flow
 		}
 	}
 	return nil
+}
+
+// summarizeStep collapses a flow.Step into (kind, one-line preview) for
+// dry-run output. Single source of truth used by every dry-run printer
+// (target flows, instance flows, fleet flows) so new step types only need
+// one new branch here.
+func summarizeStep(s flow.Step) (kind, cmd string) {
+	switch {
+	case s.GUI != nil:
+		return "gui:" + s.GUI.Kind, guiSummary(s.GUI)
+	case s.Assert != "":
+		return "assert", s.Assert
+	case len(s.Exec) > 0:
+		return "exec", strings.Join(s.Exec, " ")
+	case len(s.Install) > 0:
+		parts := make([]string, 0, len(s.Install))
+		for k, v := range s.Install {
+			parts = append(parts, k+":"+v)
+		}
+		return "install", strings.Join(parts, " | ")
+	case s.Sync != "":
+		return "sync", s.Sync
+	case s.Artifact != nil:
+		return "artifact", s.Artifact.Src
+	}
+	return "run", s.Run
+}
+
+// guiSummary renders a one-line dry-run preview of a gui: step. Picks the
+// most informative field per kind so the plan line is readable without
+// dumping all four optional fields for every step.
+func guiSummary(g *flow.GUIStep) string {
+	switch g.Kind {
+	case "click", "click-element":
+		return g.Selector
+	case "click-text", "type":
+		if g.Text != "" {
+			return g.Text
+		}
+		return g.Selector
+	case "click-at":
+		return fmt.Sprintf("%v,%v", g.Extra["x"], g.Extra["y"])
+	case "hotkey":
+		if g.Text != "" {
+			return g.Text
+		}
+		return g.Selector
+	case "screenshot", "run", "run-flow":
+		return g.Path
+	case "wait":
+		ms := g.Extra["milliseconds"]
+		if ms == nil {
+			ms = g.Extra["ms"]
+		}
+		return fmt.Sprintf("%vms", ms)
+	}
+	return ""
 }
 
 func stripDashDash(args []string) []string {

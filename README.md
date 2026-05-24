@@ -130,6 +130,43 @@ steps:
   - assert: ./scripts/verify.sh
 ```
 
+### GUI steps
+
+A `gui:` step dispatches a structured desktop action through the target's
+GUI-capable transport (today: `guiport` on macOS). Useful for verifying
+desktop apps end-to-end without dropping back to free-form shell.
+
+```yaml
+# examples/flows/guiport-e2e.yaml
+steps:
+  - run: osascript -e 'tell application "TextEdit" to activate'
+  - gui: { kind: wait, extra: { milliseconds: 600 } }
+  - gui: { kind: observe }
+  - gui: { kind: type, text: "hello vmlab" }
+  - gui: { kind: screenshot, path: /tmp/shot.png }
+  - assert: 'test -s /tmp/shot.png'
+```
+
+Supported `kind`s map to guiport verbs: `click`, `click-text`, `click-at`,
+`type`, `hotkey`, `screenshot`, `observe`, `tree`, `wait` (host-side sleep),
+`run` (replay a guiport YAML). See `examples/flows/guiport-e2e.yaml` for a
+runnable demo and `examples/flows/recall-cross-os.yaml` for a cross-OS
+flow (linux + windows + mac, single junit.xml).
+
+#### Gating steps on environment
+
+`when:` now accepts `env=NAME` and `env!=NAME` clauses alongside `os=` and
+`arch=`. Use this to make a step opt-in via an env var — handy for actions
+that need a TCC grant the rest of the flow doesn't:
+
+```yaml
+# Only runs when invoked as VMLAB_GUI_SCREENSHOT=1 vmlab run ...
+- when: env=VMLAB_GUI_SCREENSHOT
+  gui: { kind: screenshot, path: /tmp/shot.png }
+- when: env=VMLAB_GUI_SCREENSHOT
+  assert: 'test -s /tmp/shot.png'
+```
+
 ## MCP for agents
 
 ```sh

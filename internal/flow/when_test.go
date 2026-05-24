@@ -2,6 +2,36 @@ package flow
 
 import "testing"
 
+func TestMatchWhen_EnvClause(t *testing.T) {
+	t.Setenv("VMLAB_TEST_FLAG", "1")
+	t.Setenv("VMLAB_TEST_EMPTY", "")
+
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{expr: "env=VMLAB_TEST_FLAG", want: true},
+		{expr: "env=VMLAB_TEST_EMPTY", want: false},           // empty counts as unset
+		{expr: "env=VMLAB_TEST_NOT_SET", want: false},         // missing
+		{expr: "env!=VMLAB_TEST_NOT_SET", want: true},         // negation: must be unset
+		{expr: "env!=VMLAB_TEST_FLAG", want: false},           // negation: must be unset
+		{expr: "os=darwin,env=VMLAB_TEST_FLAG", want: true},   // AND of true,true
+		{expr: "os=darwin,env=VMLAB_TEST_EMPTY", want: false}, // AND short-circuits
+	}
+	for _, c := range cases {
+		got, err := matchWhen(c.expr, "darwin", "arm64")
+		if err != nil {
+			t.Errorf("expr=%q unexpected error: %v", c.expr, err)
+			continue
+		}
+		// AND-combined clauses on the os=darwin/arch=arm64 line above match,
+		// so the env clause governs the result.
+		if got != c.want {
+			t.Errorf("expr=%q: got %v, want %v", c.expr, got, c.want)
+		}
+	}
+}
+
 func TestMatchWhen(t *testing.T) {
 	cases := []struct {
 		expr    string

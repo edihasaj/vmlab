@@ -338,10 +338,7 @@ func printInstancePlan(w io.Writer, inst provider.Instance, f *flow.Flow, cmdLin
 		plan["flow"] = f.SourceFile
 		steps := make([]map[string]any, 0, len(f.Steps))
 		for i, s := range f.Steps {
-			kind, line := "run", s.Run
-			if s.Assert != "" {
-				kind, line = "assert", s.Assert
-			}
+			kind, line := summarizeStep(s)
 			steps = append(steps, map[string]any{"index": i, "kind": kind, "cmd": line})
 		}
 		plan["steps"] = steps
@@ -360,10 +357,7 @@ func printInstancePlan(w io.Writer, inst provider.Instance, f *flow.Flow, cmdLin
 	if f != nil {
 		fmt.Fprintf(w, "flow:    %s\n", f.SourceFile)
 		for i, s := range f.Steps {
-			kind, line := "run", s.Run
-			if s.Assert != "" {
-				kind, line = "assert", s.Assert
-			}
+			kind, line := summarizeStep(s)
 			fmt.Fprintf(w, "  %d. %-6s %s\n", i, kind, line)
 		}
 	} else {

@@ -41,6 +41,9 @@ func newGUICmd() *cobra.Command {
 		selector string
 		text     string
 		path     string
+		x        int
+		y        int
+		ms       int
 	)
 	c := &cobra.Command{
 		Use:   "gui <target>",
@@ -55,13 +58,29 @@ func newGUICmd() *cobra.Command {
 			if a.Kind == "" {
 				return fmt.Errorf("--kind is required")
 			}
+			extra := map[string]any{}
+			if cmd.Flags().Changed("x") {
+				extra["x"] = x
+			}
+			if cmd.Flags().Changed("y") {
+				extra["y"] = y
+			}
+			if cmd.Flags().Changed("ms") {
+				extra["milliseconds"] = ms
+			}
+			if len(extra) > 0 {
+				a.Extra = extra
+			}
 			return tr.GUI(cmd.Context(), t, a)
 		},
 	}
-	c.Flags().StringVar(&kind, "kind", "", "action kind: click | type | screenshot | run")
-	c.Flags().StringVar(&selector, "selector", "", "AX selector or descriptor")
-	c.Flags().StringVar(&text, "text", "", "text to type")
+	c.Flags().StringVar(&kind, "kind", "", "action kind: click | click-text | click-at | type | hotkey | screenshot | observe | tree | wait | run")
+	c.Flags().StringVar(&selector, "selector", "", "AX selector or descriptor (or hotkey chord as fallback)")
+	c.Flags().StringVar(&text, "text", "", "text to type, click-text target, or hotkey chord")
 	c.Flags().StringVar(&path, "path", "", "screenshot output path or flow path")
+	c.Flags().IntVar(&x, "x", 0, "x coord for click-at")
+	c.Flags().IntVar(&y, "y", 0, "y coord for click-at")
+	c.Flags().IntVar(&ms, "ms", 0, "milliseconds for wait")
 	return c
 }
 

@@ -1,0 +1,10 @@
+name: mac-local-gui
+transport: guiport
+tags: [local, mac, gui]
+capabilities:
+  gui: true
+  screenshot: true
+guiport:
+  # macOS app for guiport's --app flag. Omit to drive whatever is currently
+  # frontmost (e.g. when paired with `open -a` / osascript in a prior step).
+  app: TextEdit
