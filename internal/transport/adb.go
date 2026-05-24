@@ -40,6 +40,14 @@ func (a *adbTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 	if len(cmd) == 0 {
 		return Result{}, fmt.Errorf("adb: empty command")
 	}
+	// run:/assert: arrive wrapped as `sh -lc <cmd>` — Android's sh -lc
+	// mis-parses (the -l swallows the script-name positional). Unwrap
+	// and hand the raw cmdLine to `adb shell` so the device's shell
+	// handles it correctly.
+	if IsHostShellArgv(cmd) {
+		args = append(args, "shell", cmd[2])
+		return runExternal(ctx, a.bin, args, stdout, stderr)
+	}
 	first := cmd[0]
 	switch first {
 	case "shell", "install", "uninstall", "push", "pull", "logcat", "reboot", "forward", "reverse":
