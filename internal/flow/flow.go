@@ -72,6 +72,36 @@ type Step struct {
 	// responsible for cleanup — pair with a `taskkill` / `pkill` step or a
 	// PID file. Only meaningful on `run:`; ignored elsewhere.
 	Background bool `yaml:"background,omitempty"`
+
+	// GUI is a structured desktop UI action dispatched via the target's
+	// transport.GUI(). Lets a flow drive guiport (or any future GUI
+	// transport) without falling back to free-form shell. Mutually
+	// exclusive with run/assert/exec/install/artifact/sync.
+	GUI *GUIStep `yaml:"gui,omitempty"`
+}
+
+// GUIStep is the YAML form of transport.GUIAction. Only `kind` is required;
+// each kind reads the fields it needs and ignores the rest. Variable
+// substitution applies to selector, text, and path.
+//
+// Supported kinds map to guiport CLI verbs:
+//
+//   - click        — click an AX selector (role[attr=value])
+//   - click-text   — click the first element whose visible text matches
+//   - click-at     — click absolute screen coords x,y (in `extra`)
+//   - type         — type the given text (optional --into selector)
+//   - hotkey       — press a chord (e.g. "cmd+shift+4")
+//   - screenshot   — capture the screen to `path`
+//   - observe      — emit the frontmost-app summary
+//   - tree         — dump the AX tree of the frontmost app
+//   - wait         — sleep for `ms` (in `extra`)
+//   - run          — execute a guiport YAML flow at `path`
+type GUIStep struct {
+	Kind     string         `yaml:"kind"`
+	Selector string         `yaml:"selector,omitempty"`
+	Text     string         `yaml:"text,omitempty"`
+	Path     string         `yaml:"path,omitempty"`
+	Extra    map[string]any `yaml:"extra,omitempty"`
 }
 
 // ArtifactSpec describes a host-side build that produces a binary per OS.
@@ -237,6 +267,38 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			continue
 		}
 
+		// GUI step dispatches to the transport's GUI() with a structured
+		// action. The transport (today: guiport) decides how to talk to the
+		// underlying tool. No shell wrap, no workdir/env — keep the contract
+		// thin so it works the same way on any future GUI transport.
+		if s.GUI != nil {
+			if s.GUI.Kind == "" {
+				return results, fmt.Errorf("step %d: gui.kind is required", i)
+			}
+			action := transport.GUIAction{
+				Kind:     rt.substitute(s.GUI.Kind),
+				Selector: rt.substitute(s.GUI.Selector),
+				Text:     rt.substitute(s.GUI.Text),
+				Path:     rt.substitute(s.GUI.Path),
+				Extra:    s.GUI.Extra,
+			}
+			label := "gui:" + action.Kind
+			start := time.Now()
+			slog.Debug("flow step", "target", t.Name, "index", i, "kind", label, "selector", action.Selector, "path", action.Path)
+			fmt.Fprintf(stderr, "step %d (%s): selector=%q text=%q path=%q\n", i, label, action.Selector, oneLine(action.Text), action.Path)
+			err := tr.GUI(ctx, t, action)
+			dur := time.Since(start)
+			sr := StepResult{Index: i, Kind: label, Cmd: action.Kind, Name: s.Name, DurationMs: dur.Milliseconds()}
+			if err != nil {
+				sr.ExitCode = 1
+				sr.Error = err.Error()
+				results = append(results, sr)
+				return results, err
+			}
+			results = append(results, sr)
+			continue
+		}
+
 		// Effective workdir/env: step wins, else flow-level default.
 		workdir := rt.substitute(s.Workdir)
 		if workdir == "" {
@@ -280,7 +342,7 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			kind, cmd = "assert", rt.substitute(s.Assert)
 			argv = transport.WrapShell(t, wrapForExec(t, cmd, workdir, env))
 		default:
-			return results, fmt.Errorf("step %d: must set run, assert, exec, install, or artifact", i)
+			return results, fmt.Errorf("step %d: must set run, assert, exec, install, artifact, sync, or gui", i)
 		}
 		start := time.Now()
 		slog.Debug("flow step", "target", t.Name, "index", i, "kind", kind, "cmd", oneLine(cmd))

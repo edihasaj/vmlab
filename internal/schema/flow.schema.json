@@ -77,6 +77,36 @@
               },
               "deliver_to": { "type": "string" }
             }
+          },
+          "gui": {
+            "type": "object",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "click",
+                  "click-text",
+                  "click-at",
+                  "type",
+                  "hotkey",
+                  "screenshot",
+                  "observe",
+                  "tree",
+                  "wait",
+                  "run",
+                  "run-flow"
+                ]
+              },
+              "selector": { "type": "string" },
+              "text": { "type": "string" },
+              "path": { "type": "string" },
+              "extra": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
           }
         },
         "anyOf": [
@@ -85,7 +115,8 @@
           { "required": ["exec"] },
           { "required": ["install"] },
           { "required": ["artifact"] },
-          { "required": ["sync"] }
+          { "required": ["sync"] },
+          { "required": ["gui"] }
         ]
       }
     }

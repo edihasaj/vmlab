@@ -1,0 +1,40 @@
+name: guiport-e2e
+# End-to-end smoke for the guiport transport. Drives the local Mac through
+# the new gui: step type — open an app, type, screenshot, assert.
+#
+# Run with:
+#   vmlab run mac-local-gui examples/flows/guiport-e2e.yaml --verbose
+#
+# Prereqs:
+#   - guiport on PATH (`guiport doctor`)
+#   - Accessibility + Screen Recording granted to the terminal launching vmlab
+#     (or to guiport itself if running standalone)
+steps:
+  - name: ensure shot dir
+    run: mkdir -p /tmp/vmlab-gui
+
+  - name: bring TextEdit to the foreground via the host shell
+    run: osascript -e 'tell application "TextEdit" to activate' -e 'delay 0.5'
+
+  - name: settle
+    gui:
+      kind: wait
+      extra:
+        milliseconds: 600
+
+  - name: observe frontmost app
+    gui:
+      kind: observe
+
+  - name: type a known marker
+    gui:
+      kind: type
+      text: "hello vmlab — $VMLAB_TARGET"
+
+  - name: capture screenshot
+    gui:
+      kind: screenshot
+      path: /tmp/vmlab-gui/shot.png
+
+  - name: assert screenshot landed
+    assert: 'test -s /tmp/vmlab-gui/shot.png'

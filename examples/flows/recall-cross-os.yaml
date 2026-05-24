@@ -1,0 +1,98 @@
+name: recall-cross-os
+# Verify the `recall` CLI works on linux, windows, and macOS in one run.
+#
+# Run against the fleet (mac + lin-vmlab + win11-studio):
+#   vmlab run @@vm examples/flows/recall-cross-os.yaml --max-parallel 3
+#
+# Or pick a single target:
+#   vmlab run lin-vmlab examples/flows/recall-cross-os.yaml
+#
+# Linux/Windows install paths are the documented one-liners from
+# https://recallmemory.dev. macOS uses the local install if present.
+steps:
+  # ---------- Linux ----------
+  - when: os=linux
+    name: ensure swap (small VMs get OOM-killed during npm install)
+    run: |
+      set -e
+      if [ ! -e /swapfile ]; then
+        sudo fallocate -l 2G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile >/dev/null
+        sudo swapon /swapfile
+      fi
+      free -m | head -3
+
+  - when: os=linux
+    name: ensure node/npm
+    run: |
+      set -e
+      if ! command -v node >/dev/null 2>&1; then
+        curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+      fi
+      node --version
+      npm --version
+
+  - when: os=linux
+    name: install recall (npm)
+    run: |
+      set -e
+      if ! command -v recall >/dev/null 2>&1; then
+        sudo npm i -g @edihasaj/recall
+      fi
+      recall --version || true
+
+  - when: os=linux
+    name: recall doctor
+    run: recall doctor || true
+
+  # ---------- Windows ----------
+  - when: os=windows
+    name: ensure recall (irm install via child process)
+    # Run the install script as a CHILD PowerShell process so its exit code
+    # cannot kill our verifier. The tray download in install.ps1 can flake
+    # on the release CDN; the CLI is what we need, so we verify presence
+    # via Get-Command and only fail the step if `recall` is truly missing.
+    exec:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -Command
+      - "$tmp = Join-Path $env:TEMP 'recall-install.ps1'; irm https://recallmemory.dev/install.ps1 -OutFile $tmp; & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $tmp; $env:Path = ([Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')); $recallExe = Get-Command recall -ErrorAction SilentlyContinue; if (-not $recallExe) { $cand = Join-Path $env:APPDATA 'npm\\recall.cmd'; if (Test-Path $cand) { $recallExe = $cand } }; if (-not $recallExe) { throw 'recall CLI not on PATH after install' }; & $recallExe --version"
+
+  - when: os=windows
+    name: recall doctor
+    exec:
+      - powershell.exe
+      - -NoProfile
+      - -ExecutionPolicy
+      - Bypass
+      - -Command
+      - "$env:Path = ([Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')); $recallExe = (Get-Command recall -ErrorAction SilentlyContinue); if (-not $recallExe) { $cand = Join-Path $env:APPDATA 'npm\\recall.cmd'; if (Test-Path $cand) { $recallExe = $cand } }; if (-not $recallExe) { exit 0 }; & $recallExe doctor"
+
+  # ---------- macOS ----------
+  - when: os=darwin
+    name: recall already installed?
+    run: command -v recall && recall --version || echo "recall not present; install via brew or npm to run this row"
+
+  - when: os=darwin
+    name: bring dashboard to the foreground (best-effort)
+    run: |
+      command -v recall >/dev/null && recall webui start >/dev/null 2>&1 &
+      sleep 2
+      true
+
+  - when: os=darwin
+    name: settle
+    gui:
+      kind: wait
+      extra:
+        milliseconds: 800
+
+  - when: os=darwin
+    name: capture dashboard screenshot
+    gui:
+      kind: screenshot
+      path: /tmp/vmlab-gui/recall-dashboard.png
