@@ -427,22 +427,23 @@ if ($found.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [re
 else { throw "element does not support InvokePattern" }`, a.Text, a.Text), nil
 	case "type":
 		if a.Text == "" {
-			return "", fmt.Errorf("parallels-guest gui type requires text")
+			return "", fmt.Errorf("gui type requires text")
 		}
-		// prlctl exec runs outside the interactive desktop session, so
-		// raw SendKeys fails with UIPI "Access is denied". UIA's
-		// ValuePattern.SetValue writes through the accessibility layer —
-		// it doesn't require desktop input privilege. The focused control
-		// must support ValuePattern (most text inputs do; some custom
-		// controls don't).
-		return prelude + fmt.Sprintf(`$el = [Windows.Automation.AutomationElement]::FocusedElement
-if (-not $el) { throw "no focused element" }
-$pat = $null
-if ($el.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pat)) {
-  $pat.SetValue(%q)
-} else {
-  throw "focused element does not support ValuePattern; can't type without an interactive session"
-}`, a.Text), nil
+		// Try SendKeys first (works in interactive session via ssh-windows);
+		// fall back to UIA ValuePattern (works without session via
+		// parallels-guest, when the focused element supports it).
+		return prelude + fmt.Sprintf(`try {
+  [System.Windows.Forms.SendKeys]::SendWait(%q)
+} catch {
+  $el = [Windows.Automation.AutomationElement]::FocusedElement
+  if (-not $el) { throw "no focused element and SendKeys denied" }
+  $pat = $null
+  if ($el.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pat)) {
+    $pat.SetValue(%q)
+  } else {
+    throw "focused element does not support ValuePattern"
+  }
+}`, a.Text, a.Text), nil
 	case "hotkey":
 		chord := a.Text
 		if chord == "" {
