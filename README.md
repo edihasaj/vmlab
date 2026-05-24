@@ -14,16 +14,28 @@ that drives Parallels and Hetzner instances.
 
 ## Install
 
-```sh
-brew tap edihasaj/tap
-brew install vmlab
-```
-
-Or build from source:
+vmlab ships pre-built binaries for darwin/linux × amd64/arm64. The repo
+is private, so install pulls the release tarball through your local
+`gh` auth:
 
 ```sh
-go install github.com/edihasaj/vmlab/cmd/vmlab@latest
+# one-liner; needs `gh auth login` (and pulls v(latest))
+curl -fsSL https://raw.githubusercontent.com/edihasaj/vmlab/main/scripts/install-private.sh | bash
+
+# install to ~/.local/bin (no sudo)
+PREFIX=$HOME/.local scripts/install-private.sh
 ```
+
+Build from source (Go ≥1.24):
+
+```sh
+git clone https://github.com/edihasaj/vmlab && cd vmlab
+make install                          # → $GOPATH/bin/vmlab
+PREFIX=$HOME/.local make install      # → $HOME/.local/bin/vmlab
+```
+
+Brew tap (`brew install edihasaj/tap/vmlab`) is gated on the repo
+going public; see the note in `.goreleaser.yaml`.
 
 ## Quickstart
 
