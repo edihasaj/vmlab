@@ -24,5 +24,13 @@ func WrapShell(t target.Target, cmdLine string) []string {
 		}
 		return []string{"cmd.exe", "/c", cmdLine}
 	}
+	// Android's /system/bin/sh mis-parses `-lc` — the `-l` flag eats the
+	// script-name positional, so `sh -lc 'getprop X'` runs getprop with
+	// no argument. adb shell already routes through the device's shell,
+	// so we pass the command verbatim and let the transport's `adb shell`
+	// invocation handle it.
+	if t.Transport == "adb" {
+		return []string{cmdLine}
+	}
 	return []string{"sh", "-lc", cmdLine}
 }
