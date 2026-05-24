@@ -24,13 +24,13 @@ func WrapShell(t target.Target, cmdLine string) []string {
 		}
 		return []string{"cmd.exe", "/c", cmdLine}
 	}
-	// Android's /system/bin/sh mis-parses `-lc` — the `-l` flag eats the
-	// script-name positional, so `sh -lc 'getprop X'` runs getprop with
-	// no argument. adb shell already routes through the device's shell,
-	// so we pass the command verbatim and let the transport's `adb shell`
-	// invocation handle it.
-	if t.Transport == "adb" {
-		return []string{cmdLine}
-	}
 	return []string{"sh", "-lc", cmdLine}
+}
+
+// IsHostShellArgv reports whether argv looks like `sh -lc <cmd>` — the
+// shape WrapShell emits for run:/assert: steps. Transports that route
+// argv to a tool's subcommand (adb, simctl, idb, maestro) use this to
+// detect run:/assert: steps and execute them on the host instead.
+func IsHostShellArgv(argv []string) bool {
+	return len(argv) >= 3 && argv[0] == "sh" && argv[1] == "-lc"
 }
