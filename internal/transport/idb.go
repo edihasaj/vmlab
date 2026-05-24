@@ -57,7 +57,7 @@ func (i *idbTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 // and would reject the flag.
 func idbVerbAcceptsUDID(verb string) bool {
 	switch verb {
-	case "list-targets", "list-apps", "companion", "create", "delete", "delete-all", "connect", "disconnect", "help", "":
+	case "list-targets", "companion", "connect", "disconnect", "help", "":
 		return false
 	}
 	return true
