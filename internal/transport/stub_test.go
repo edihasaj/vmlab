@@ -356,6 +356,173 @@ func TestGuiportWaitIsLocal(t *testing.T) {
 	}
 }
 
+func TestSSHMacGUIInvokesRemoteGuiport(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSHMac()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh":     map[string]any{"host": "mac.lan", "user": "edi"},
+			"guiport": map[string]any{"app": "TextEdit"},
+		},
+	}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"}); err != nil {
+		t.Fatalf("click-text: %v", err)
+	}
+	raw, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "edi@mac.lan") {
+		t.Errorf("expected user@host in argv: %s", got)
+	}
+	if !strings.Contains(got, "guiport click-text") {
+		t.Errorf("expected remote 'guiport click-text': %s", got)
+	}
+	if !strings.Contains(got, "--app 'TextEdit'") {
+		t.Errorf("expected guiport.app to flow through: %s", got)
+	}
+}
+
+func TestSSHMacDoctorProbesRemoteGuiport(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSHMac()
+	tgt := target.Target{Settings: map[string]any{"ssh": map[string]any{"host": "mac.lan"}}}
+	h := tr.Doctor(context.Background(), tgt)
+	if !h.OK {
+		t.Fatalf("doctor expected OK, got %+v", h)
+	}
+	raw, _ := os.ReadFile(args)
+	if !strings.Contains(string(raw), "guiport doctor") {
+		t.Errorf("expected remote 'guiport doctor' probe: %s", string(raw))
+	}
+}
+
+func TestSSHWaylandBackendRoutesToWtype(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan", "backend": "wayland"},
+		},
+	}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hello"}); err != nil {
+		t.Fatalf("type: %v", err)
+	}
+	got := readLastArgs(t, args)
+	if !strings.Contains(got, "wtype") {
+		t.Errorf("expected wtype in argv: %s", got)
+	}
+	if strings.Contains(got, "xdotool") {
+		t.Errorf("xdotool must not appear with backend=wayland: %s", got)
+	}
+}
+
+func TestSSHWaylandRejectsClickText(t *testing.T) {
+	dir := t.TempDir()
+	stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan", "backend": "wayland"},
+		},
+	}
+	err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"})
+	if err == nil {
+		t.Fatal("expected error: click-text needs atspi on wayland")
+	}
+	if !strings.Contains(err.Error(), "atspi") {
+		t.Errorf("error should point at atspi: %v", err)
+	}
+}
+
+func TestSSHAutoBackendEmitsConditional(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan"}, // no backend set → auto
+		},
+	}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "x"}); err != nil {
+		t.Fatalf("type: %v", err)
+	}
+	got := readLastArgs(t, args)
+	if !strings.Contains(got, "WAYLAND_DISPLAY") {
+		t.Errorf("auto backend should probe WAYLAND_DISPLAY: %s", got)
+	}
+	if !strings.Contains(got, "wtype") || !strings.Contains(got, "xdotool") {
+		t.Errorf("auto backend should include both wtype and xdotool branches: %s", got)
+	}
+}
+
+func TestSSHAtspiClickTextRoutesToPython(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan", "uiMode": "atspi"},
+		},
+	}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Allow"}); err != nil {
+		t.Fatalf("click-text: %v", err)
+	}
+	// AT-SPI ships a multi-line Python heredoc, so read the whole capture
+	// rather than just the last newline-terminated record.
+	raw, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, "python3 -c") {
+		t.Errorf("expected atspi python3 invocation: %s", got)
+	}
+	if !strings.Contains(got, "pyatspi") {
+		t.Errorf("expected pyatspi import in remote payload: %s", got)
+	}
+	if strings.Contains(got, "xdotool") || strings.Contains(got, "wtype") {
+		t.Errorf("atspi mode must not fall through to display-server backend: %s", got)
+	}
+}
+
+func TestSSHAtspiFallsThroughForNonLabelVerbs(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan", "uiMode": "atspi", "backend": "x11"},
+		},
+	}
+	// type/hotkey aren't AT-SPI verbs; should route to xdotool.
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hi"}); err != nil {
+		t.Fatalf("type: %v", err)
+	}
+	got := readLastArgs(t, args)
+	if !strings.Contains(got, "xdotool") {
+		t.Errorf("type should route to xdotool under atspi+x11: %s", got)
+	}
+}
+
 func TestSSHApproveFallsBackToReturnKey(t *testing.T) {
 	dir := t.TempDir()
 	// Stub ssh: fail click-text invocations (windows not titled Allow/OK),

@@ -114,5 +114,6 @@ func Default() *Registry {
 	r.Register(NewParallelsGuest())
 	r.Register(NewSSH())
 	r.Register(NewSSHWindows())
+	r.Register(NewSSHMac())
 	return r
 }

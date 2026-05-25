@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"io"
@@ -144,6 +145,53 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 	decoded := decodePowerShell(t, enc)
 	if !strings.Contains(decoded, "PSVersionTable") {
 		t.Errorf("expected PSVersionTable probe in decoded ps: %s", decoded)
+	}
+}
+
+func TestParseElevatedOutbox(t *testing.T) {
+	raw := []byte(`{"exitCode":7,"stdout":"hello\n","stderr":"warn\n"}`)
+	var so, se bytes.Buffer
+	res, err := parseElevatedOutbox(raw, &so, &se)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 7 {
+		t.Errorf("exit=%d", res.ExitCode)
+	}
+	if so.String() != "hello\n" || se.String() != "warn\n" {
+		t.Errorf("stdout/stderr mismatch: %q / %q", so.String(), se.String())
+	}
+}
+
+func TestSSHWindowsElevatedFlagsRouteThroughTask(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "ssh", 0)
+	withPath(t, dir)
+
+	tr := NewSSHWindows()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{
+				"host":     "win.lan",
+				"elevated": true,
+			},
+		},
+	}
+	// We don't need the result to make sense — only that the stage script
+	// referenced schtasks /run and the configured task name. The payload
+	// is wrapped in -EncodedCommand (UTF-16LE base64); decode first.
+	_, _ = tr.Run(context.Background(), tgt, []string{"powershell.exe", "-Command", "ver"}, io.Discard, io.Discard)
+	raw, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := extractEncodedCommand(t, string(raw))
+	decoded := decodePowerShell(t, enc)
+	if !strings.Contains(decoded, "schtasks /run /tn") || !strings.Contains(decoded, "vmlab-elevated") {
+		t.Errorf("expected schtasks routing with default task name in decoded payload:\n%s", decoded)
+	}
+	if !strings.Contains(decoded, `C:\ProgramData\vmlab\inbox\next.ps1`) {
+		t.Errorf("expected inbox staging in decoded payload:\n%s", decoded)
 	}
 }
 

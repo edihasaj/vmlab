@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -146,11 +147,92 @@ func (s *sshWindowsTransport) Run(ctx context.Context, t target.Target, cmd []st
 	if len(cmd) == 0 {
 		return Result{}, fmt.Errorf("ssh-windows: empty command")
 	}
+	if t.Setting("ssh", "elevated") == true {
+		return s.runElevated(ctx, t, cmd, stdout, stderr)
+	}
 	args, err := winSSHArgs(t, cmd)
 	if err != nil {
 		return Result{}, err
 	}
 	return runExternal(ctx, "ssh", args, stdout, stderr)
+}
+
+// runElevated routes the command through the vmlab-elevated scheduled task
+// (registered once via `vmlab elevate setup`). Pattern:
+//
+//  1. Stage the command into C:\ProgramData\vmlab\inbox\next.ps1 (the
+//     fixed action target of the scheduled task) and a per-call outbox
+//     path for stdout/stderr capture.
+//  2. Trigger via `schtasks /run /tn <task>` — runs as SYSTEM, no UAC.
+//  3. Poll the outbox for the result marker; surface stdout / stderr /
+//     exit-code in the Result.
+//
+// Concurrency: a per-target file lock prevents two callers from racing the
+// shared inbox file. Acquired on the host side (we hold it for the whole
+// remote round-trip) rather than the guest side, which avoids a second
+// remote round-trip just to coordinate.
+func (s *sshWindowsTransport) runElevated(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {
+	taskName := t.SettingString("ssh", "elevatedTask")
+	if taskName == "" {
+		taskName = "vmlab-elevated"
+	}
+	// Compose the PowerShell payload that the SYSTEM task will execute.
+	// We capture stdout / stderr / exit-code into the outbox so the host
+	// can fetch them deterministically. UTF-8 throughout — Windows PowerShell
+	// 5.1 defaults to UTF-16LE; we explicitly set Encoding UTF8 to keep the
+	// round-trip lossless.
+	payload := winElevatedPayload(cmd)
+	inboxScript := payload.scriptBody + "\nGet-Content -Path " + payload.outboxJSON
+	// First: drop inbox + stdout/stderr/exit-code marker. Each call uses
+	// the same fixed inbox.ps1 (the task's action argument) plus a unique
+	// outbox suffix that the host polls for.
+	stageScript := fmt.Sprintf(`$ErrorActionPreference='Stop'
+$inbox  = 'C:\ProgramData\vmlab\inbox\next.ps1'
+$outbox = %s
+Remove-Item $outbox -ErrorAction SilentlyContinue
+Set-Content -Path $inbox -Value @'
+%s
+'@ -Encoding UTF8
+schtasks /run /tn %s | Out-Null
+$deadline = (Get-Date).AddSeconds(%d)
+while (-not (Test-Path $outbox) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+if (-not (Test-Path $outbox)) { Write-Error 'vmlab-elevated: task did not write outbox in time'; exit 124 }
+Get-Content -Raw $outbox
+`, posixSingleQuote(payload.outboxPath), inboxScript, posixSingleQuote(taskName), int(elevatedRunTimeout(t).Seconds()))
+	args, err := winSSHArgs(t, []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", stageScript})
+	if err != nil {
+		return Result{}, err
+	}
+	var raw bytes.Buffer
+	res, err := runExternal(ctx, "ssh", args, &raw, stderr)
+	if err != nil {
+		return res, err
+	}
+	if res.ExitCode != 0 {
+		return res, fmt.Errorf("ssh-windows elevated: stage/run exit=%d", res.ExitCode)
+	}
+	// raw is the outbox JSON the SYSTEM task wrote. Parse out the wrapped
+	// stdout / stderr / exit-code so the caller's Result reflects the
+	// elevated execution (not the staging shim).
+	return parseElevatedOutbox(raw.Bytes(), stdout, stderr)
+}
+
+// elevatedRunTimeout returns the per-call timeout the staging shim waits
+// for the SYSTEM task to write its outbox. Default 60s; override via
+// ssh.elevatedTimeout (Go duration string).
+func elevatedRunTimeout(t target.Target) time.Duration {
+	if s := t.SettingString("ssh", "elevatedTimeout"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			return d
+		}
+	}
+	return 60 * time.Second
+}
+
+// posixSingleQuote wraps a string in PowerShell single quotes, doubling
+// embedded single quotes to escape them (PowerShell's standard quoting).
+func posixSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func (s *sshWindowsTransport) Shell(ctx context.Context, t target.Target) error {
@@ -512,4 +594,76 @@ func cmdQuote(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// elevatedPayload bundles the inbox script body, the per-call outbox path
+// (where the SYSTEM task writes captured stdout/stderr/exit), and a stable
+// outboxJSON expression used inside the inbox script to point at the same
+// file. Two values so the inbox script can embed the path verbatim while
+// the host-side stage script uses the PowerShell-quoted form.
+type elevatedPayload struct {
+	scriptBody string // the body the SYSTEM task runs
+	outboxPath string // raw path; the host stage script quotes this
+	outboxJSON string // already-quoted path for embedding in PowerShell
+}
+
+// winElevatedPayload composes the script the scheduled task will run. It
+// invokes the caller's command, captures stdout/stderr/exit-code, and
+// writes them as a small machine-readable record to outboxPath. The host
+// polls for that file and parses it via parseElevatedOutbox.
+//
+// Command shape: the caller's argv (e.g. ["powershell.exe","-Command","ls"])
+// is invoked as-is via the call operator (`& <exe> <args...>`). We do not
+// re-quote each arg — they're already in the form winSSHArgs would have
+// shipped, and the round-trip is local to the task.
+func winElevatedPayload(cmd []string) elevatedPayload {
+	id := fmt.Sprintf("%d-%d", time.Now().UnixNano(), len(cmd))
+	outbox := "C:\\ProgramData\\vmlab\\outbox\\" + id + ".out"
+	// Build PowerShell argv literally: ($args -as [string[]]) keeps the call
+	// operator happy when the array has more than one element.
+	var argList strings.Builder
+	for i, a := range cmd {
+		if i > 0 {
+			argList.WriteString(",")
+		}
+		argList.WriteString(posixSingleQuote(a))
+	}
+	body := fmt.Sprintf(`$argv = @(%s)
+$outbox = %s
+$tmpOut = [System.IO.Path]::GetTempFileName()
+$tmpErr = [System.IO.Path]::GetTempFileName()
+$proc = Start-Process -FilePath $argv[0] -ArgumentList ($argv | Select-Object -Skip 1) -NoNewWindow -PassThru -Wait -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+$ec = $proc.ExitCode
+$out = Get-Content -Raw -Path $tmpOut -ErrorAction SilentlyContinue
+$err = Get-Content -Raw -Path $tmpErr -ErrorAction SilentlyContinue
+Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+$payload = @{ exitCode = $ec; stdout = $out; stderr = $err } | ConvertTo-Json -Compress
+Set-Content -Path $outbox -Value $payload -Encoding UTF8`, argList.String(), posixSingleQuote(outbox))
+	return elevatedPayload{scriptBody: body, outboxPath: outbox, outboxJSON: posixSingleQuote(outbox)}
+}
+
+// parseElevatedOutbox reads the JSON the SYSTEM task wrote and projects
+// stdout / stderr / exit-code onto the caller's writers + Result.
+func parseElevatedOutbox(raw []byte, stdout, stderr io.Writer) (Result, error) {
+	// The outbox is a single-line JSON object. Trim a UTF-8 BOM defensively
+	// — PowerShell 5.1 still occasionally emits one.
+	text := strings.TrimSpace(strings.TrimPrefix(string(raw), "\xef\xbb\xbf"))
+	if text == "" {
+		return Result{}, fmt.Errorf("ssh-windows elevated: empty outbox")
+	}
+	var rec struct {
+		ExitCode int    `json:"exitCode"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	}
+	if err := json.Unmarshal([]byte(text), &rec); err != nil {
+		return Result{}, fmt.Errorf("ssh-windows elevated: parse outbox: %w (raw=%q)", err, text)
+	}
+	if stdout != nil && rec.Stdout != "" {
+		_, _ = io.WriteString(stdout, rec.Stdout)
+	}
+	if stderr != nil && rec.Stderr != "" {
+		_, _ = io.WriteString(stderr, rec.Stderr)
+	}
+	return Result{ExitCode: rec.ExitCode}, nil
 }

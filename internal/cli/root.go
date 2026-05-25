@@ -48,6 +48,7 @@ func NewRoot() *cobra.Command {
 		newWebCmd(),
 		newGUICmd(),
 		newGrantCmd(),
+		newElevateCmd(),
 		newScreenshotCmd(),
 		newEvidenceCmd(),
 		newUsageCmd(),

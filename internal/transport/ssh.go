@@ -211,8 +211,7 @@ func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction) er
 	if a.Kind == "approve" {
 		return s.approve(ctx, t, a)
 	}
-	display := sshDisplay(t)
-	cmd, err := xdoCmd(a, display)
+	cmd, err := sshGuiCmd(t, a)
 	if err != nil {
 		return err
 	}
@@ -263,6 +262,218 @@ func sshStrictHost(t target.Target) string {
 		return v
 	}
 	return "yes"
+}
+
+// sshGuiCmd picks the right backend (X11 xdotool / Wayland ydotool+wtype) and
+// returns the remote shell command for the GUI action. Selection:
+//
+//   - explicit ssh.backend = "x11" | "wayland"     — honoured verbatim
+//   - explicit ssh.backend = "auto" (default empty) — picks at runtime by
+//     probing WAYLAND_DISPLAY / XDG_SESSION_TYPE in the remote shell, so a
+//     single flow works across desktop sessions.
+//
+// The auto path emits a small `if`-shell that runs whichever side matches.
+// Verbs that one backend can't express (e.g. xdotool window-name match on
+// Wayland) raise a clear error; install AT-SPI on the guest and route via
+// ssh.uiMode=atspi for those.
+func sshGuiCmd(t target.Target, a GUIAction) (string, error) {
+	// AT-SPI is opt-in via ssh.uiMode=atspi. When on, it owns the label-based
+	// verbs (click / click-text); other verbs fall through to the display-
+	// server backend. AT-SPI is bus-level so it works under both X11 and
+	// Wayland — that's its main reason to exist here.
+	if strings.EqualFold(t.SettingString("ssh", "uiMode"), "atspi") {
+		if cmd, ok := atspiCmd(a); ok {
+			return cmd, nil
+		}
+	}
+	backend := strings.ToLower(t.SettingString("ssh", "backend"))
+	display := sshDisplay(t)
+	switch backend {
+	case "x11":
+		return xdoCmd(a, display)
+	case "wayland":
+		return wlCmd(a)
+	}
+	// auto: try wayland first if the session signals it, else fall back to X11.
+	x, errX := xdoCmd(a, display)
+	w, errW := wlCmd(a)
+	if errX != nil && errW != nil {
+		// Surface the X11 error since X11 is the historical default.
+		return "", errX
+	}
+	if errX != nil {
+		// Wayland-only verb (rare; today all our verbs render in both).
+		return wlAutoGuard(w), nil
+	}
+	if errW != nil {
+		return x, nil
+	}
+	return fmt.Sprintf(`bash -lc 'if [ -n "$WAYLAND_DISPLAY" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then %s; else %s; fi'`,
+		shellEscapeForSingleQuote(w), shellEscapeForSingleQuote(x)), nil
+}
+
+// atspiScript is the Python helper staged on the guest via heredoc. It walks
+// the AT-SPI desktop tree, finds the first clickable element whose Name or
+// Description matches the requested label (substring, case-insensitive),
+// and invokes its primary action. Works under both X11 and Wayland.
+//
+// Requires the guest to have `python3-pyatspi` (Ubuntu/Debian) or
+// `at-spi2-core` plus python3 bindings (Fedora/Arch) installed, and the
+// accessibility bus running for the user session. vmlab doesn't try to
+// install those automatically — too OS-specific and too privileged.
+const atspiScript = `import sys, pyatspi
+mode = sys.argv[1]
+needle = sys.argv[2].lower() if len(sys.argv) > 2 else ""
+CLICKABLE = (pyatspi.ROLE_PUSH_BUTTON, pyatspi.ROLE_TOGGLE_BUTTON,
+             pyatspi.ROLE_MENU_ITEM, pyatspi.ROLE_LINK,
+             pyatspi.ROLE_RADIO_BUTTON, pyatspi.ROLE_CHECK_BOX)
+def matches(node):
+    n = (node.name or "").lower()
+    d = (node.description or "").lower()
+    return needle and (needle in n or needle in d)
+def walk(root, depth=0):
+    try: kids = list(root)
+    except: kids = []
+    for c in kids:
+        if c is None: continue
+        try:
+            role = c.getRole()
+        except: role = None
+        if role in CLICKABLE and matches(c):
+            try:
+                a = c.queryAction()
+                for i in range(a.nActions):
+                    nm = a.getName(i).lower()
+                    if nm in ("click","press","activate","jump","check","uncheck"):
+                        a.doAction(i)
+                        print("clicked:", c.name)
+                        return True
+            except: pass
+        if walk(c, depth+1): return True
+    return False
+ok = walk(pyatspi.Registry.getDesktop(0))
+sys.exit(0 if ok else 1)
+`
+
+// atspiCmd returns the remote shell command for an AT-SPI-eligible verb,
+// or (_, false) when the verb doesn't apply (caller falls through to the
+// display-server backend).
+func atspiCmd(a GUIAction) (string, bool) {
+	switch a.Kind {
+	case "click-text":
+		if a.Text == "" {
+			return "", false
+		}
+		return atspiRun("click-text", a.Text), true
+	case "click":
+		// AT-SPI doesn't have a "click by selector"; we treat the selector
+		// as a Name substring, identical to click-text.
+		if a.Selector == "" {
+			return "", false
+		}
+		return atspiRun("click-text", a.Selector), true
+	}
+	return "", false
+}
+
+// atspiRun packages the heredoc invocation. Python args round-trip through
+// single-quoted positional parameters; the script body is kept in a quoted
+// heredoc so dollar signs / backticks don't get expanded by the outer shell.
+func atspiRun(mode, label string) string {
+	return fmt.Sprintf(`python3 -c %s %s %s`,
+		shellSingleQuote(atspiScript),
+		shellSingleQuote(mode),
+		shellSingleQuote(label))
+}
+
+// wlAutoGuard wraps a Wayland-only command in a runtime guard so it noisily
+// errors when invoked on an X11 session instead of silently misbehaving.
+func wlAutoGuard(w string) string {
+	return fmt.Sprintf(`bash -lc 'if [ -n "$WAYLAND_DISPLAY" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then %s; else echo "ssh gui: wayland-only verb on x11 session" >&2; exit 64; fi'`,
+		shellEscapeForSingleQuote(w))
+}
+
+// shellEscapeForSingleQuote escapes a string that itself contains the
+// `bash -lc '...'` payload so embedded single quotes round-trip correctly.
+// Strategy: close the outer quote, emit a literal quote, reopen.
+func shellEscapeForSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", `'\''`)
+}
+
+// wlCmd builds a Wayland-side shell command for a GUI action using
+// ydotool (mouse + keys via uinput) and wtype (text + keysyms). The guest
+// must have ydotoold running (uinput access) and wtype installed.
+//
+// Mapped verbs:
+//   - click-at    — ydotool mousemove --absolute X Y; ydotool click 1
+//   - type        — wtype 'text'
+//   - hotkey      — wtype -k Return / -M ctrl -k c -m ctrl (per chord)
+//   - observe     — wlrctl/swaymsg-friendly: print active window if available
+//   - open-url    — xdg-open (works under both display servers)
+//
+// Wayland has no global window-name search akin to xdotool's --name, so
+// click / click-text return a clear error pointing at ssh.uiMode=atspi.
+func wlCmd(a GUIAction) (string, error) {
+	switch a.Kind {
+	case "click-at":
+		return fmt.Sprintf(`ydotool mousemove --absolute %d %d && ydotool click 1`,
+			extraInt(a.Extra, "x"), extraInt(a.Extra, "y")), nil
+	case "type":
+		if a.Text == "" {
+			return "", fmt.Errorf("ssh gui type requires text")
+		}
+		return "wtype " + shellSingleQuote(a.Text), nil
+	case "hotkey":
+		chord := a.Text
+		if chord == "" {
+			chord = a.Selector
+		}
+		if chord == "" {
+			return "", fmt.Errorf("ssh gui hotkey requires text (chord)")
+		}
+		return "wtype " + chordToWtype(chord), nil
+	case "open-url":
+		url := a.Path
+		if url == "" {
+			url = a.Text
+		}
+		if url == "" {
+			return "", fmt.Errorf("ssh gui open-url requires path or text")
+		}
+		return "xdg-open " + shellSingleQuote(url), nil
+	case "observe":
+		// Best-effort: swaymsg for Sway, wlrctl for wlroots compositors,
+		// otherwise just an "(unknown wayland compositor)" line.
+		return `(swaymsg -t get_tree 2>/dev/null | jq -r '.. | select(.focused?==true) | .name' | head -1) || (wlrctl window | head -1) || echo "(unknown wayland compositor)"`, nil
+	case "click", "click-text":
+		return "", fmt.Errorf("ssh gui %s: wayland has no global window-name search — set ssh.uiMode=atspi or use click-at coordinates", a.Kind)
+	}
+	return "", fmt.Errorf("ssh: wayland backend has no mapping for %q", a.Kind)
+}
+
+// chordToWtype maps the cross-platform chord syntax to wtype's flags.
+// wtype takes -M <mod> ... -k <key> ... -m <mod> sequences. Common chords:
+//
+//	ctrl+c   -> -M ctrl -k c -m ctrl
+//	alt+tab  -> -M alt  -k Tab -m alt
+//	return   -> -k Return
+func chordToWtype(chord string) string {
+	parts := strings.Split(strings.ToLower(chord), "+")
+	if len(parts) == 1 {
+		// Bare key (Return, Escape, Tab…) — wtype expects the keysym name.
+		return "-k " + shellSingleQuote(parts[0])
+	}
+	mods := parts[:len(parts)-1]
+	key := parts[len(parts)-1]
+	var b strings.Builder
+	for _, m := range mods {
+		fmt.Fprintf(&b, "-M %s ", m)
+	}
+	fmt.Fprintf(&b, "-k %s ", shellSingleQuote(key))
+	for i := len(mods) - 1; i >= 0; i-- {
+		fmt.Fprintf(&b, "-m %s ", mods[i])
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // xdoCmd returns the remote shell command for a given GUI action.

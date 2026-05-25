@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (coverage gaps — Linux Wayland/AT-SPI, remote macOS, Windows elevation)
+
+- **Linux Wayland support** via `ydotool` (mouse + click-at) and `wtype`
+  (type + hotkey). Auto-detected at runtime by probing `WAYLAND_DISPLAY`
+  / `XDG_SESSION_TYPE` in the remote shell, so a single target works
+  across X11 and Wayland sessions. Override with `ssh.backend: x11 |
+  wayland`. Wayland's lack of a global window-name search means
+  `click` / `click-text` raise a clear error pointing at AT-SPI.
+- **Linux AT-SPI integration** via `ssh.uiMode: atspi`. Stages an
+  inline Python heredoc that uses `pyatspi3` to walk the desktop
+  accessibility tree, match Name / Description against a label, and
+  invoke the matching node's primary action. Works under both X11 and
+  Wayland because AT-SPI is bus-level. Guest must have `python3-pyatspi`
+  (or equivalent) installed.
+- **`ssh-mac` transport** — drives a remote macOS host by invoking the
+  guest's locally-installed `guiport` over SSH. Same GUI verb table as
+  the local guiport transport (click, click-text, type, hotkey,
+  observe, tree, screenshot, approve), so flows are portable between
+  `mac-local-gui` and remote Mac targets. Screenshots round-trip via
+  scp from a guest temp file. Doctor probes the remote `guiport doctor`
+  so an agent learns when AX or Screen Recording isn't granted yet.
+- **Windows pre-elevation via scheduled task** — new CLI:
+  ```sh
+  vmlab elevate setup <target>      # one-time, needs admin SSH session
+  vmlab elevate status <target>
+  ```
+  Installs (or refreshes) a SYSTEM-running scheduled task that vmlab can
+  trigger from non-elevated SSH sessions thereafter. Set `ssh.elevated:
+  true` on the target to route `Run()` calls through the task — vmlab
+  stages a PowerShell payload to `C:\ProgramData\vmlab\inbox\next.ps1`,
+  fires `schtasks /run`, polls the per-call outbox for the captured
+  stdout/stderr/exit-code, and projects them onto the caller's writers.
+  UAC's secure desktop is unreachable by design; this trades that
+  one-time cost for zero UAC prompts during real flows.
+  Configurable via `ssh.elevatedTask` (default `vmlab-elevated`) and
+  `ssh.elevatedTimeout` (default 60s).
+
 ### Added (agent grants — zero-touch for in-app, single-tap for TCC)
 
 - **`gui:approve` step (cross-OS)** — polls for any consent dialog and
