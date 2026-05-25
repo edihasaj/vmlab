@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (cloud pricing — `Priced` for every cloud)
+
+Every cloud provider now implements `provider.Priced`, so the
+`budget.hourlyUSD` cap actually fires against real quoted rates
+instead of acting as documentation only.
+
+- **AWS** — `aws pricing get-products` (us-east-1 endpoint). Filters
+  by `instanceType` + `regionCode`. OS / tenancy honoured via
+  `ec2.os` / `ec2.tenancy`. Memoised per process.
+- **Azure** — public Retail Prices API at `prices.azure.com` (no
+  auth). Filters by `armSkuName` + `armRegionName`. Picks the
+  lowest non-Spot consumption tier.
+- **Hetzner** — `hcloud server-type list -o json` already publishes
+  `price_hourly.gross` per (type, location). EUR→USD conversion
+  via `HETZNER_EUR_USD` env (default 1.07).
+- **GCP** — `gcp.hourlyUSD` instance override only. The Cloud
+  Billing Catalog API integration is left as a follow-up since SKU
+  matching against fuzzy product names is error-prone; the override
+  is the honest path until a live integration lands.
+
+`budget.hourlyUSD` now does what it claimed all along: a real cap
+that refuses Up when a misconfigured instance type or region would
+quietly bill above the operator's ceiling. Providers that can't
+quote a rate (zero return from `HourlyUSD`) still fall through
+cleanly — no fail-closed surprises.
+
 ### Added (cloud snapshots — AWS, Azure, GCP)
 
 Three providers now implement `provider.Snapshotter`, lifting the

@@ -43,6 +43,16 @@ budget:
   hourlyUSD: 2.50   # refuse Up if AWS quotes > $2.50/hr
 ```
 
+#### Per-provider pricing sources
+
+| Provider | Where the rate comes from |
+|---|---|
+| `aws` | `aws pricing get-products` (us-east-1 endpoint). Filtered by `instanceType` + `regionCode`. Memoised in-process. |
+| `azure` | Public Retail Prices API (`prices.azure.com`). No auth. Filtered by `armSkuName` + `armRegionName`. Lowest non-Spot price wins. |
+| `hetzner` | `hcloud server-type list -o json` includes `price_hourly.gross` per location. EUR→USD via `HETZNER_EUR_USD` env (default 1.07). |
+| `gcp` | `gcp.hourlyUSD` instance override only. The Cloud Billing Catalog API requires an explicit API key and the SKU naming is fuzzy enough that a programmatic match is error-prone; the override is the honest path until a live integration lands. |
+| Others | Not priced — budget cap acts as documentation only. |
+
 ## Instance config
 
 Lives in `~/.vmlab/instances/<name>.yaml` (and repo overrides in
