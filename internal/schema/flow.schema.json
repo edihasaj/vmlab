@@ -19,6 +19,9 @@
         "properties": {
           "name": { "type": "string" },
           "when": { "type": "string" },
+          "retries": { "type": "integer", "minimum": 0 },
+          "retry_delay": { "type": "string", "minLength": 1 },
+          "timeout": { "type": "string", "minLength": 1 },
           "workdir": { "type": "string", "minLength": 1 },
           "env": {
             "type": "object",
@@ -95,6 +98,7 @@
                   "observe",
                   "tree",
                   "wait",
+                  "approve",
                   "run",
                   "run-flow",
                   "open-url",

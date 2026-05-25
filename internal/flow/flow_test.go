@@ -87,6 +87,61 @@ steps:
 	}
 }
 
+func TestStepRetriesUntilSuccess(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "n")
+	path := filepath.Join(dir, "f.yaml")
+	body := fmt.Sprintf(`name: retry
+steps:
+  - name: flaky
+    retries: 3
+    retry_delay: 10ms
+    run: 'n=$(cat %q 2>/dev/null || echo 0); n=$((n+1)); echo $n > %q; [ $n -ge 3 ]'
+`, marker, marker)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := transport.NewLocal()
+	var out, errb bytes.Buffer
+	steps, err := Run(context.Background(), tr, target.Target{Name: "local", Transport: "local"}, f, &out, &errb)
+	if err != nil {
+		t.Fatalf("run: %v\nstderr: %s", err, errb.String())
+	}
+	if len(steps) != 1 || steps[0].ExitCode != 0 {
+		t.Fatalf("expected retry success, got %+v\nstderr: %s", steps, errb.String())
+	}
+	if !strings.Contains(errb.String(), "retry 1/3") {
+		t.Fatalf("expected retry log, got: %s", errb.String())
+	}
+}
+
+func TestStepTimeoutFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.yaml")
+	body := `name: timeout
+steps:
+  - timeout: 50ms
+    run: 'sleep 5'
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := transport.NewLocal()
+	var out, errb bytes.Buffer
+	_, err = Run(context.Background(), tr, target.Target{Name: "local", Transport: "local"}, f, &out, &errb)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+}
+
 func TestGUIStepDispatchesToGuiport(t *testing.T) {
 	if goruntime.GOOS == "windows" {
 		t.Skip("uses POSIX stub binaries")

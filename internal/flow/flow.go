@@ -64,6 +64,16 @@ type Step struct {
 	// (which has no env channel) stays unchanged.
 	Env map[string]string `yaml:"env,omitempty"`
 
+	// Retries re-runs the step's action on failure (non-zero exit or transport
+	// error) up to N times after the initial attempt. Applies to run/assert/
+	// exec/install/gui/sync. RetryDelay is the wait between attempts (default
+	// 1s if Retries>0). Useful for flaky UI clicks or polling assertions.
+	Retries    int    `yaml:"retries,omitempty"`
+	RetryDelay string `yaml:"retry_delay,omitempty"`
+	// Timeout bounds a single attempt via context.WithTimeout. Empty = no
+	// inner bound (uses the outer flow context). Parsed as a Go duration.
+	Timeout string `yaml:"timeout,omitempty"`
+
 	// Background fires the command and returns immediately. Use for daemons
 	// you want to probe (and later kill) from subsequent steps. Wraps the
 	// command via `start "" /B cmd /c "<cmd>"` on Windows and `<cmd> &` on
@@ -250,7 +260,9 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			start := time.Now()
 			src := rt.substitute(s.Sync)
 			fmt.Fprintf(stderr, "step %d (sync): %s\n", i, src)
-			err := tr.Sync(ctx, t, src)
+			_, err := runWithRetry(ctx, &s, i, stderr, func(c context.Context) (transport.Result, error) {
+				return transport.Result{}, tr.Sync(c, t, src)
+			})
 			dur := time.Since(start)
 			sr := StepResult{Index: i, Kind: "sync", Cmd: src, Name: s.Name, DurationMs: dur.Milliseconds()}
 			if err != nil {
@@ -286,7 +298,9 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			start := time.Now()
 			slog.Debug("flow step", "target", t.Name, "index", i, "kind", label, "selector", action.Selector, "path", action.Path)
 			fmt.Fprintf(stderr, "step %d (%s): selector=%q text=%q path=%q\n", i, label, action.Selector, oneLine(action.Text), action.Path)
-			err := tr.GUI(ctx, t, action)
+			_, err := runWithRetry(ctx, &s, i, stderr, func(c context.Context) (transport.Result, error) {
+				return transport.Result{}, tr.GUI(c, t, action)
+			})
 			dur := time.Since(start)
 			sr := StepResult{Index: i, Kind: label, Cmd: action.Kind, Name: s.Name, DurationMs: dur.Milliseconds()}
 			if err != nil {
@@ -347,7 +361,9 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 		start := time.Now()
 		slog.Debug("flow step", "target", t.Name, "index", i, "kind", kind, "cmd", oneLine(cmd))
 		fmt.Fprintf(stderr, "step %d (%s): %s\n", i, kind, oneLine(cmd))
-		res, err := tr.Run(ctx, t, argv, stdout, stderr)
+		res, err := runWithRetry(ctx, &s, i, stderr, func(c context.Context) (transport.Result, error) {
+			return tr.Run(c, t, argv, stdout, stderr)
+		})
 		dur := time.Since(start)
 		sr := StepResult{Index: i, Kind: kind, Cmd: cmd, Name: s.Name, ExitCode: res.ExitCode, DurationMs: dur.Milliseconds()}
 		if err != nil {
@@ -451,6 +467,53 @@ func matchWhen(expr, osKind, arch string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// runWithRetry runs attempt() up to s.Retries+1 times, each bounded by
+// s.Timeout if set. A non-zero exit OR a non-nil error triggers a retry.
+// Sleeps s.RetryDelay between attempts (default 1s).
+func runWithRetry(ctx context.Context, s *Step, idx int, stderr io.Writer, attempt func(context.Context) (transport.Result, error)) (transport.Result, error) {
+	delay := time.Second
+	if s.RetryDelay != "" {
+		if d, err := time.ParseDuration(s.RetryDelay); err == nil {
+			delay = d
+		}
+	}
+	var timeout time.Duration
+	if s.Timeout != "" {
+		if d, err := time.ParseDuration(s.Timeout); err == nil {
+			timeout = d
+		}
+	}
+	tries := s.Retries + 1
+	var res transport.Result
+	var err error
+	for attemptNum := 1; attemptNum <= tries; attemptNum++ {
+		attemptCtx := ctx
+		var cancel context.CancelFunc
+		if timeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
+		res, err = attempt(attemptCtx)
+		if cancel != nil {
+			cancel()
+		}
+		if err == nil && res.ExitCode == 0 {
+			return res, nil
+		}
+		if attemptNum < tries {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return res, ctxErr
+			}
+			fmt.Fprintf(stderr, "step %d retry %d/%d after %s (last err=%v exit=%d)\n", idx, attemptNum, s.Retries, delay, err, res.ExitCode)
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+	}
+	return res, err
 }
 
 func oneLine(s string) string {
