@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (cloud snapshots — AWS, Azure, GCP)
+
+Three providers now implement `provider.Snapshotter`, lifting the
+capability matrix from "Parallels + Hetzner only" to "every supported
+cloud + Parallels". `vmlab snapshot save/ls/restore/rm` works across
+all five today.
+
+- **AWS** — `aws ec2 create-image` produces an AMI tagged
+  `vmlab-image=<name>` / `vmlab-source=<instance>`. Cleanup
+  deregisters the AMI and deletes the backing EBS snapshots. Set
+  `ec2.snapshotNoReboot: true` for a hot snapshot at the cost of
+  filesystem consistency. Restore returns a clear hint to set
+  `ec2.imageId` on a fresh instance YAML (AWS doesn't restore in-place).
+- **Azure** — defaults to OS-disk snapshot (`az snapshot create`),
+  non-disruptive on a running VM. Opt into the full managed-image
+  path with `azure.snapshotMode: image`; vmlab deallocates first.
+  List/Delete combine both shapes. Restore hint: `azure.osDiskId`.
+- **GCP** — `gcloud compute machine-images create` captures disks +
+  metadata in one resource; cheaper to restore from than per-disk
+  snapshots. List/Delete filter by `labels.vmlab-image`. Restore
+  hint: `gcp.sourceMachineImage`.
+
+Tests use the existing stub-binary pattern (no live cloud calls):
+each provider's snapshot/list/delete/restore paths get unit coverage
+against canned CLI output. `docs/providers.md` matrix updated.
+
 ### Added (live log streaming over MCP)
 
 - **`vmlab_run_status` MCP tool** (read-only) — returns a run's running

@@ -16,9 +16,9 @@ Instance (YAML)  ──▶  Provider.Up()  ──▶  Target  ──▶  Transpo
 |---|---|---|---|---|---|
 | `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` | ✓ native | live-smoked |
 | `hetzner` | `hcloud` CLI | `ssh` | `destroy` | ✓ image-based | code + tests; `vmlab provider validate hetzner` dry-runs the token |
-| `aws` | `aws` CLI | `ssh` | `destroy` | ✗ (planned: AMI-based) | MVP — `vmlab snapshot` returns "not supported" until added |
-| `azure` | `az` CLI | `ssh` | `destroy` | ✗ (planned: managed image) | MVP — same caveat |
-| `gcp` | `gcloud` CLI | `ssh` | `destroy` | ✗ (planned: machine image) | MVP — same caveat |
+| `aws` | `aws` CLI | `ssh` | `destroy` | ✓ EC2 AMI + EBS | tagged `vmlab-image=<name>`; deregister + delete-snapshot in cleanup |
+| `azure` | `az` CLI | `ssh` | `destroy` | ✓ disk-snapshot (default) / managed-image (opt-in) | `azure.snapshotMode: image` for managed-image path |
+| `gcp` | `gcloud` CLI | `ssh` | `destroy` | ✓ machine image | captures disks + metadata in one resource |
 | `tart` | `tart` CLI | `ssh` | `keep` | ✗ (Tart has clone but no in-place snapshot) | MVP |
 | `windows` | local Windows / Hyper-V | `ssh-windows` | `keep` | ✗ | MVP |
 
