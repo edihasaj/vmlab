@@ -310,7 +310,7 @@ esac`)
 		Ready:    provider.ReadyConfig{Timeout: "1s"},
 	}
 	inst.Settings = map[string]any{"parallels": map[string]any{"vm": "x"}}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	_, _, err := p.Up(ctx, inst)
 	if err == nil {

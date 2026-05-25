@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,12 +26,17 @@ func (a *adbTransport) Doctor(ctx context.Context, t target.Target) Health {
 		return Health{OK: false, Message: "adb not on PATH"}
 	}
 	args := append(adbSerialArgs(t), "get-state")
-	res, err := runExternal(ctx, a.bin, args, io.Discard, io.Discard)
+	var errBuf bytes.Buffer
+	res, err := runExternal(ctx, a.bin, args, io.Discard, &errBuf)
 	if err != nil {
 		return Health{OK: false, Message: err.Error()}
 	}
 	if res.ExitCode != 0 {
-		return Health{OK: false, Message: "adb get-state failed (device offline?)"}
+		msg := firstLine(strings.TrimSpace(errBuf.String()))
+		if msg == "" {
+			msg = "device offline?"
+		}
+		return Health{OK: false, Message: "adb get-state failed: " + msg}
 	}
 	return Health{OK: true, Message: "adb device online"}
 }

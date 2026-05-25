@@ -29,6 +29,9 @@ func runExternal(ctx context.Context, name string, args []string, stdout, stderr
 	if err == nil {
 		return res, nil
 	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return res, fmt.Errorf("%s: %w after %dms", name, ctxErr, res.Duration)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		res.ExitCode = ee.ExitCode()
@@ -59,6 +62,9 @@ func runExternalStdin(ctx context.Context, name string, args []string, stdin io.
 	res := Result{Duration: time.Since(start).Milliseconds()}
 	if err == nil {
 		return res, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return res, fmt.Errorf("%s: %w after %dms", name, ctxErr, res.Duration)
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {

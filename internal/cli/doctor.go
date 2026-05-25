@@ -100,6 +100,6 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
-	c.Flags().DurationVar(&timeout, "timeout", 10*time.Second, "per-doctor timeout")
+	c.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "doctor timeout (shared across all targets)")
 	return c
 }

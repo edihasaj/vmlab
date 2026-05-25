@@ -402,10 +402,19 @@ func (p *Provider) waitReady(ctx context.Context, i provider.Instance) error {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("waitReady: timed out after %s: %w", timeout, err)
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay):
+		sleep := delay
+		if rem := time.Until(deadline); rem < sleep {
+			sleep = rem
+		}
+		if sleep > 0 {
+			select {
+			case <-ctx.Done():
+				if time.Now().After(deadline) {
+					return fmt.Errorf("waitReady: timed out after %s: %w", timeout, err)
+				}
+				return ctx.Err()
+			case <-time.After(sleep):
+			}
 		}
 		if delay < 4*time.Second {
 			delay += time.Second
