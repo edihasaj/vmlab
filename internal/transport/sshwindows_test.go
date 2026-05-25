@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -142,6 +144,48 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 	decoded := decodePowerShell(t, enc)
 	if !strings.Contains(decoded, "PSVersionTable") {
 		t.Errorf("expected PSVersionTable probe in decoded ps: %s", decoded)
+	}
+}
+
+func TestSSHWindowsApproveIteratesLabels(t *testing.T) {
+	dir := t.TempDir()
+	// Stub ssh: succeed only when the encoded PowerShell payload contains
+	// our chosen target label "Allow". Anything else exits 1 (no match).
+	// This simulates UIA returning "no element with Name containing X".
+	// Stub ssh: fail the first invocation (OK), succeed on the second
+	// (Allow). The exact label can't be cheaply parsed from the
+	// PowerShell EncodedCommand here, so use the call-count proxy.
+	script := `#!/bin/sh
+count_file="` + dir + `/count"
+n=$(cat "$count_file" 2>/dev/null || echo 0)
+n=$((n+1))
+echo "$n" > "$count_file"
+if [ "$n" -ge 2 ]; then
+  echo "clicked" >> "` + dir + `/clicked"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewSSHWindows()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "win.lan"},
+		},
+	}
+	err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind:  "approve",
+		Extra: map[string]any{"allow": []any{"OK", "Allow"}, "timeout": "3s"},
+	})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "clicked")); err != nil {
+		t.Fatalf("expected Allow click to register, got: %v", err)
 	}
 }
 

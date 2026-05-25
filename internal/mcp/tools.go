@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 
+	"strings"
+
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
 	"github.com/edihasaj/vmlab/internal/fleet"
 	"github.com/edihasaj/vmlab/internal/flow"
 	"github.com/edihasaj/vmlab/internal/provider"
 	_ "github.com/edihasaj/vmlab/internal/provider/all"
+	"github.com/edihasaj/vmlab/internal/state"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -298,6 +301,11 @@ func handleUp(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolRe
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
+	release, err := acquireMCPInstanceLock(inst.Name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	defer release()
 	tgt, res, err := pr.Up(ctx, inst)
 	if err != nil {
 		return helperError(err.Error()), nil
@@ -319,6 +327,11 @@ func handleDown(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallTool
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
+	release, err := acquireMCPInstanceLock(inst.Name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	defer release()
 	d, err := resolveDisposeMCP(disposeRaw, inst.Disp.OnSuccess, provider.DisposeSuspend)
 	if err != nil {
 		return helperError(err.Error()), nil
@@ -340,6 +353,11 @@ func handleWith(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallTool
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
+	release, err := acquireMCPInstanceLock(inst.Name)
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	defer release()
 	tgt, res, err := pr.Up(ctx, inst)
 	if err != nil {
 		return helperError(err.Error()), nil
@@ -379,6 +397,24 @@ func handleWith(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallTool
 		out["err"] = runErr.Error()
 	}
 	return helperResult(mustJSON(out)), nil
+}
+
+// acquireMCPInstanceLock takes the same per-instance file lock the CLI uses
+// (vmlab up/down/with/run @<inst>) so MCP calls can't race local commands or
+// other MCP clients on the same instance. Returns a release closure.
+func acquireMCPInstanceLock(name string) (func(), error) {
+	_, paths, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := config.EnsureDirs(paths); err != nil {
+		return nil, err
+	}
+	lock, err := state.Acquire(paths.StateDir, name, func(string) {})
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = lock.Release() }, nil
 }
 
 func resolveInstanceForMCP(name string) (provider.Provider, provider.Instance, error) {
@@ -443,9 +479,39 @@ func handleGUI(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 		Path:     stringArg(req, "path", ""),
 	}
 	if err := tr.GUI(ctx, t, action); err != nil {
-		return helperError(err.Error()), nil
+		payload := map[string]any{"error": err.Error()}
+		if needs := inferNeedsGrant(t.Transport, err); len(needs) > 0 {
+			payload["needsGrant"] = needs
+			payload["hint"] = "call vmlab_grant with one of needsGrant; human Touch ID is still required for the OS prompt"
+		}
+		return helperError(mustJSON(payload)), nil
 	}
 	return helperResult(mustJSON(map[string]any{"ok": true})), nil
+}
+
+// inferNeedsGrant pattern-matches transport errors for known "not trusted"
+// messages and returns the TCC scope(s) the caller should grant. We return
+// scope names that vmlab_grant accepts, so an agent can chain the calls
+// without translation.
+func inferNeedsGrant(transportName string, err error) []string {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if transportName != "guiport" && transportName != "undermouse" {
+		return nil
+	}
+	var out []string
+	if strings.Contains(msg, "accessibility") && (strings.Contains(msg, "not trusted") || strings.Contains(msg, "not granted") || strings.Contains(msg, "permission")) {
+		out = append(out, "accessibility")
+	}
+	if strings.Contains(msg, "screen") && (strings.Contains(msg, "recording") || strings.Contains(msg, "capture")) && (strings.Contains(msg, "not trusted") || strings.Contains(msg, "not granted") || strings.Contains(msg, "permission")) {
+		out = append(out, "screen-recording")
+	}
+	if strings.Contains(msg, "input monitoring") || strings.Contains(msg, "input_monitoring") {
+		out = append(out, "input-monitoring")
+	}
+	return out
 }
 
 // ---- helpers ---------------------------------------------------------------

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -11,6 +12,13 @@ import (
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
+
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
 
 // sshWindowsTransport runs commands on a remote Windows host over the OpenSSH
 // server that ships with Windows 10/11 + Windows Server (the modern norm).
@@ -69,12 +77,19 @@ func (s *sshWindowsTransport) Doctor(ctx context.Context, t target.Target) Healt
 	if err != nil {
 		return Health{OK: false, Message: err.Error()}
 	}
-	res, err := runExternal(ctx, "ssh", args, io.Discard, io.Discard)
+	var errBuf bytes.Buffer
+	res, err := runExternal(ctx, "ssh", args, io.Discard, &errBuf)
 	if err != nil {
 		return Health{OK: false, Message: err.Error()}
 	}
 	if res.ExitCode != 0 {
-		return Health{OK: false, Message: fmt.Sprintf("ssh exit=%d", res.ExitCode)}
+		msg := strings.TrimSpace(errBuf.String())
+		if msg == "" {
+			msg = fmt.Sprintf("ssh exit=%d", res.ExitCode)
+		} else {
+			msg = fmt.Sprintf("ssh exit=%d: %s", res.ExitCode, firstLine(msg))
+		}
+		return Health{OK: false, Message: msg}
 	}
 	return Health{OK: true, Message: "ssh-windows reachable"}
 }
@@ -250,6 +265,9 @@ func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAct
 	if a.Kind == "screenshot" {
 		return s.Screenshot(ctx, t, a.Path)
 	}
+	if a.Kind == "approve" {
+		return s.approve(ctx, t, a)
+	}
 	script, err := winuiScript(a)
 	if err != nil {
 		return err
@@ -271,6 +289,59 @@ func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAct
 		return fmt.Errorf("ssh-windows gui %s exited %d", a.Kind, res.ExitCode)
 	}
 	return nil
+}
+
+// approve polls for a consent dialog and clicks the first matching button via
+// UIA Name-substring match. Same shape as guiport's approve — deny labels
+// checked before allow so an explicit refuse beats a generic Allow. The
+// per-attempt invocation is the existing click-text path, so this benefits
+// from all the UIA wiring (window walk, InvokePattern, error reporting).
+//
+// Limitations: UAC consent (secure desktop) is unreachable here by design.
+// For elevation, pre-bootstrap a SYSTEM scheduled task on the target so the
+// elevated process never has to prompt.
+func (s *sshWindowsTransport) approve(ctx context.Context, t target.Target, a GUIAction) error {
+	allow := extraStringSlice(a.Extra, "allow")
+	if len(allow) == 0 {
+		allow = []string{"Allow access", "Allow", "Yes", "OK", "Continue", "Accept", "Trust"}
+	}
+	deny := extraStringSlice(a.Extra, "deny")
+
+	timeout := 10 * time.Second
+	if str := extraString(a.Extra, "timeout"); str != "" {
+		if d, err := time.ParseDuration(str); err == nil {
+			timeout = d
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	delay := 400 * time.Millisecond
+	for {
+		for _, label := range deny {
+			if s.tryClickText(ctx, t, label) {
+				return nil
+			}
+		}
+		for _, label := range allow {
+			if s.tryClickText(ctx, t, label) {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ssh-windows approve: no matching dialog within %s (allow=%v deny=%v)", timeout, allow, deny)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// tryClickText invokes the existing click-text GUI path silently. UIA click-
+// text returns non-zero when no button matches, which is the polling signal.
+func (s *sshWindowsTransport) tryClickText(ctx context.Context, t target.Target, label string) bool {
+	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label})
+	return err == nil
 }
 
 // winShell returns the configured Windows-side shell choice.

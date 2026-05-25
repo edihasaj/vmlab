@@ -24,6 +24,7 @@ import (
 func newGrantCmd() *cobra.Command {
 	var (
 		noWait  bool
+		auto    bool
 		timeout time.Duration
 	)
 	c := &cobra.Command{
@@ -68,6 +69,21 @@ Examples:
 				return fmt.Errorf("open settings: %w", err)
 			}
 
+			if auto {
+				// Give the pane a moment to render before guiport starts
+				// poking at the AX tree. 800ms is generous on a hot SSD,
+				// safe on a cold one, and well under typical TID timeouts.
+				time.Sleep(800 * time.Millisecond)
+				if err := autoNavigateTCC(cmd.Context(), w, binary); err != nil {
+					// Auto-navigation is best-effort; the pane is open
+					// regardless. Print the warning and continue to the
+					// polling loop so the human can complete the grant.
+					fmt.Fprintf(w, "auto-navigate: %v (continuing — pane is open)\n", err)
+				} else {
+					fmt.Fprintf(w, "auto-navigate: found %q row, toggle clicked — complete the Touch ID prompt to finish\n", binary)
+				}
+			}
+
 			if noWait {
 				fmt.Fprintln(w, "settings pane opened; not waiting for grant (--no-wait)")
 				return nil
@@ -98,8 +114,44 @@ Examples:
 		},
 	}
 	c.Flags().BoolVar(&noWait, "no-wait", false, "open the pane and exit instead of polling")
+	c.Flags().BoolVar(&auto, "auto", false, "use guiport to scroll to and click the binary's toggle (requires Accessibility already granted to guiport); Touch ID is still the human's job")
 	c.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "max time to wait for the grant")
 	return c
+}
+
+// autoNavigateTCC drives the just-opened Privacy & Security pane via guiport
+// so the user only has to authenticate. The pane's exact layout varies across
+// macOS versions, so this is best-effort:
+//
+//  1. click-text "<binary>" — locates and highlights the row.
+//  2. click-text "<binary>" again as a focus hint (some panes need a second
+//     interaction before the toggle becomes the keyboard target).
+//
+// The actual toggle flip is left to System Settings' own keyboard behaviour
+// (space when the row is focused) plus the Touch ID prompt that follows.
+// We don't try to find and click the toggle itself — its AX path moves
+// every couple OS revs and a wrong click is worse than no click.
+func autoNavigateTCC(ctx context.Context, w interface{ Write(p []byte) (int, error) }, binary string) error {
+	if _, err := exec.LookPath("guiport"); err != nil {
+		return fmt.Errorf("guiport not on PATH; install it or run without --auto")
+	}
+	// Tell System Settings to take focus so subsequent AX queries see the
+	// just-opened pane, not whatever window happened to be frontmost.
+	_ = exec.CommandContext(ctx, "osascript", "-e", `tell application "System Settings" to activate`).Run()
+	time.Sleep(400 * time.Millisecond)
+
+	ctxRow, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctxRow, "guiport", "click-text", binary, "--app", "System Settings").CombinedOutput()
+	if err != nil {
+		// Try without the --app scope; some panes register as the legacy
+		// "System Preferences" process even on modern macOS.
+		out2, err2 := exec.CommandContext(ctxRow, "guiport", "click-text", binary).CombinedOutput()
+		if err2 != nil {
+			return fmt.Errorf("click-text %q: %s", binary, strings.TrimSpace(string(out)+string(out2)))
+		}
+	}
+	return nil
 }
 
 // tccScopeURL maps a user-friendly scope name to the x-apple.systempreferences

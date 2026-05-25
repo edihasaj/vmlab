@@ -1,10 +1,12 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
@@ -125,6 +127,8 @@ func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction
 		return nil
 	case "run", "run-flow":
 		args = []string{"run", a.Path}
+	case "approve":
+		return g.approve(ctx, t, a)
 	default:
 		return fmt.Errorf("guiport: unknown action kind %q", a.Kind)
 	}
@@ -147,6 +151,125 @@ func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction
 		return fmt.Errorf("guiport %s exited %d (action=%s)", a.Kind, res.ExitCode, string(b))
 	}
 	return nil
+}
+
+// approve polls for a consent dialog and clicks the first matching button.
+// `deny` is checked before `allow` so callers can short-circuit on a refuse
+// label (e.g. "Don't Send"). Labels are matched via guiport click-text, which
+// is case-insensitive substring on the visible text of clickable elements;
+// a non-zero exit from click-text means "no such target yet" and we keep
+// polling.
+//
+// The default allow list covers the buttons most consent dialogs ship with
+// on macOS (NSAlert + Catalyst + Electron-style). Callers can override via
+// extra.allow / extra.deny. extra.timeout overrides the default 10s.
+//
+// Limitations:
+//   - System TCC prompts (Touch ID/password sheets) live outside AX and
+//     cannot be approved here — that's the one human step we accept.
+//   - Multiple dialogs stacked at once: we click the first match we find,
+//     not necessarily the topmost. Sequence approve steps if order matters.
+func (g *guiportTransport) approve(ctx context.Context, t target.Target, a GUIAction) error {
+	allow := extraStringSlice(a.Extra, "allow")
+	if len(allow) == 0 {
+		allow = []string{"Allow", "OK", "Continue", "Yes", "Trust", "Open", "Always Allow", "Allow While Using App", "Allow Once"}
+	}
+	deny := extraStringSlice(a.Extra, "deny")
+
+	timeout := 10 * time.Second
+	if s := extraString(a.Extra, "timeout"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			timeout = d
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	delay := 250 * time.Millisecond
+	app := appFlags(t)
+	for {
+		// Deny first so an explicit refuse pre-empts a generic allow.
+		for _, label := range deny {
+			if g.tryClickText(ctx, label, app) {
+				return nil
+			}
+		}
+		for _, label := range allow {
+			if g.tryClickText(ctx, label, app) {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("guiport approve: no matching dialog within %s (allow=%v deny=%v)", timeout, allow, deny)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+// tryClickText runs `guiport click-text <label>` and reports whether it
+// succeeded. Output is suppressed so the polling loop stays quiet on misses.
+func (g *guiportTransport) tryClickText(ctx context.Context, label string, app []string) bool {
+	args := append([]string{"click-text", label}, app...)
+	var buf bytes.Buffer
+	res, err := runExternal(ctx, g.bin, args, &buf, &buf)
+	if err != nil || res.ExitCode != 0 {
+		return false
+	}
+	// Some guiport builds exit 0 with a "no match" line on stderr. Treat
+	// that as a miss so we don't claim a click that never happened.
+	out := strings.ToLower(buf.String())
+	if strings.Contains(out, "no match") || strings.Contains(out, "not found") {
+		return false
+	}
+	return true
+}
+
+func extraStringSlice(m map[string]any, key string) []string {
+	if m == nil {
+		return nil
+	}
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+	switch x := v.(type) {
+	case []string:
+		return x
+	case []any:
+		out := make([]string, 0, len(x))
+		for _, e := range x {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		// Allow comma-separated for terse YAML.
+		parts := strings.Split(x, ",")
+		out := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func extraString(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // extraInt reads an integer-ish value from the Extra map, accepting int /

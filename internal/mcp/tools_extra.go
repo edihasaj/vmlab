@@ -95,6 +95,16 @@ func registerExtraTools(s *mcpserver.MCPServer, allowWrite bool) {
 		handleOrphansDestroy,
 	)
 	s.AddTool(
+		mcpgo.NewTool("vmlab_grant",
+			mcpgo.WithDescription("Open the macOS Privacy & Security pane for a TCC scope and poll until the binary reports the grant is in place. With auto=true, guiport navigates to the row so the human only Touch IDs. Returns a `needsHumanTouchID: true` field so the agent can surface a one-line prompt to the user."),
+			mcpgo.WithString("binary", mcpgo.Required(), mcpgo.Description("Binary to grant — usually 'guiport' or 'um'")),
+			mcpgo.WithString("scope", mcpgo.Description("screen-recording | accessibility | input-monitoring | full-disk-access | automation | camera | microphone (default: screen-recording)")),
+			mcpgo.WithBoolean("auto", mcpgo.Description("Drive the pane via guiport (requires Accessibility already granted to guiport)")),
+			mcpgo.WithString("timeout", mcpgo.Description("Max wait for the grant to land (Go duration, default 5m)")),
+			mcpgo.WithBoolean("noWait", mcpgo.Description("Just open the pane and return — don't poll"))),
+		handleGrant,
+	)
+	s.AddTool(
 		mcpgo.NewTool("vmlab_matrix_run",
 			mcpgo.WithDescription("Run a flow or command against any vmlab selector and return one compact ND-JSON row per target/instance. Failing rows include a 40-line stderr tail. This is the agent-friendly path: ~50× fewer tokens than vmlab_fleet_run for the same scenario."),
 			mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("@<inst> | @@<tag> | <target> | all")),
@@ -392,6 +402,65 @@ func handleMatrixRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.Cal
 		args = append(args, "--retries", strconv.Itoa(retries))
 	}
 	return runSubprocess(ctx, bin, args)
+}
+
+// handleGrant runs `vmlab grant` as a subprocess and packages the result
+// with a `needsHumanTouchID` hint the agent can use to render a one-line
+// "Touch ID once and I'll continue" UI affordance. The subprocess is the
+// same code path the CLI uses, so behaviour is identical (auto-navigation
+// via guiport, polling until the binary's doctor reports the scope, etc).
+func handleGrant(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	binary := stringArg(req, "binary", "")
+	if binary == "" {
+		return helperError("binary is required"), nil
+	}
+	scope := stringArg(req, "scope", "screen-recording")
+	auto := boolArg(req, "auto", false)
+	noWait := boolArg(req, "noWait", false)
+	timeoutStr := stringArg(req, "timeout", "")
+
+	bin, err := vmlabExecutable()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	args := []string{"grant", binary, scope}
+	if auto {
+		args = append(args, "--auto")
+	}
+	if noWait {
+		args = append(args, "--no-wait")
+	}
+	if timeoutStr != "" {
+		args = append(args, "--timeout", timeoutStr)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = os.Environ()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	exit := 0
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			exit = ee.ExitCode()
+		} else {
+			return helperError(runErr.Error()), nil
+		}
+	}
+	out := map[string]any{
+		"binary":            binary,
+		"scope":             scope,
+		"exit":              exit,
+		"stdout":            stdout.String(),
+		"stderr":            stderr.String(),
+		"needsHumanTouchID": exit != 0 && !noWait,
+	}
+	if exit == 0 {
+		out["granted"] = true
+	}
+	return helperResult(mustJSON(out)), nil
 }
 
 // runSubprocess runs the vmlab binary, captures stdout+stderr, and returns

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -41,12 +42,17 @@ func (s *sshTransport) Doctor(ctx context.Context, t target.Target) Health {
 		return Health{OK: false, Message: "ssh.host is required"}
 	}
 	args := append(sshDialArgs(t), "true")
-	res, err := runExternal(ctx, "ssh", args, io.Discard, io.Discard)
+	var errBuf bytes.Buffer
+	res, err := runExternal(ctx, "ssh", args, io.Discard, &errBuf)
 	if err != nil {
 		return Health{OK: false, Message: err.Error()}
 	}
 	if res.ExitCode != 0 {
-		return Health{OK: false, Message: fmt.Sprintf("ssh exit=%d", res.ExitCode)}
+		msg := strings.TrimSpace(errBuf.String())
+		if msg == "" {
+			return Health{OK: false, Message: fmt.Sprintf("ssh exit=%d", res.ExitCode)}
+		}
+		return Health{OK: false, Message: fmt.Sprintf("ssh exit=%d: %s", res.ExitCode, firstLine(msg))}
 	}
 	return Health{OK: true, Message: "ssh reachable"}
 }
@@ -202,6 +208,9 @@ func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction) er
 		}
 		return s.Screenshot(ctx, t, a.Path)
 	}
+	if a.Kind == "approve" {
+		return s.approve(ctx, t, a)
+	}
 	display := sshDisplay(t)
 	cmd, err := xdoCmd(a, display)
 	if err != nil {
@@ -308,6 +317,95 @@ func xdoCmd(a GUIAction, display string) (string, error) {
 // chordToXdotool maps the cross-platform chord syntax to xdotool's
 // modifier+key shape. xdotool accepts "ctrl+c" natively for most chords
 // and uses "Return"/"Tab"/"Escape"/etc. for special keys.
+// approve polls for a Linux consent dialog and tries to dismiss it.
+//
+// Linux X11 has no equivalent of macOS AX or Windows UIA, so this is best-
+// effort. Strategy, in order:
+//
+//  1. Iterate allow/deny labels via the existing click-text (xdotool window-
+//     name match). Catches dialogs whose window title contains the action
+//     word — common for some GTK/Qt consent dialogs.
+//  2. If `extra.useDefaultKey` is unset or true, fall back to sending Return
+//     (default button activation) once a candidate dialog window appears.
+//     For deny labels that match the fallback path, send Escape instead.
+//
+// For true button-by-name matching, install AT-SPI tooling on the guest
+// and shell to it directly via `run:` — that's outside vmlab's scope.
+func (s *sshTransport) approve(ctx context.Context, t target.Target, a GUIAction) error {
+	allow := extraStringSlice(a.Extra, "allow")
+	if len(allow) == 0 {
+		allow = []string{"Allow", "OK", "Continue", "Yes", "Trust", "Accept"}
+	}
+	deny := extraStringSlice(a.Extra, "deny")
+
+	timeout := 10 * time.Second
+	if str := extraString(a.Extra, "timeout"); str != "" {
+		if d, err := time.ParseDuration(str); err == nil {
+			timeout = d
+		}
+	}
+	useDefaultKey := true
+	if v, ok := a.Extra["useDefaultKey"]; ok {
+		if b, ok := v.(bool); ok {
+			useDefaultKey = b
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	delay := 400 * time.Millisecond
+	for {
+		// Window-name match — handles dialogs titled with the action word.
+		for _, label := range deny {
+			if s.tryClickText(ctx, t, label) {
+				return nil
+			}
+		}
+		for _, label := range allow {
+			if s.tryClickText(ctx, t, label) {
+				return nil
+			}
+		}
+		// Keyboard-default fallback: if any dialog-shaped window is up,
+		// send Return for allow / Escape for deny. xdotool's
+		// `getactivewindow` is enough — we don't need to identify the
+		// app, just whether something has focus that can absorb a key.
+		if useDefaultKey {
+			if len(deny) > 0 && s.sendKeyToActive(ctx, t, "Escape") {
+				return nil
+			}
+			if s.sendKeyToActive(ctx, t, "Return") {
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ssh approve: no matching dialog within %s (allow=%v deny=%v)", timeout, allow, deny)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+func (s *sshTransport) tryClickText(ctx context.Context, t target.Target, label string) bool {
+	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label})
+	return err == nil
+}
+
+// sendKeyToActive sends one keysym to the active window via xdotool. Returns
+// true only when xdotool reports a foreground window AND the key was sent.
+// We don't blindly send to ensure we're not interfering with whatever the
+// user happens to be looking at.
+func (s *sshTransport) sendKeyToActive(ctx context.Context, t target.Target, key string) bool {
+	display := sshDisplay(t)
+	// Single remote command: refuse if no active window, otherwise send.
+	remote := fmt.Sprintf(`DISPLAY=%s bash -c 'w=$(xdotool getactivewindow 2>/dev/null); test -n "$w" && xdotool key --window "$w" %s'`, display, shellSingleQuote(key))
+	args := append(sshDialArgs(t), remote)
+	res, err := runExternal(ctx, "ssh", args, io.Discard, io.Discard)
+	return err == nil && res.ExitCode == 0
+}
+
 func chordToXdotool(chord string) string {
 	parts := strings.Split(strings.ToLower(chord), "+")
 	if len(parts) == 0 {

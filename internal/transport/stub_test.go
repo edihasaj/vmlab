@@ -356,6 +356,128 @@ func TestGuiportWaitIsLocal(t *testing.T) {
 	}
 }
 
+func TestSSHApproveFallsBackToReturnKey(t *testing.T) {
+	dir := t.TempDir()
+	// Stub ssh: fail click-text invocations (windows not titled Allow/OK),
+	// succeed on the Return-key fallback path. We discriminate by whether
+	// the remote command contains `xdotool key`.
+	script := `#!/bin/sh
+last="${@: -1}"
+case "$last" in
+  *"xdotool key"*"Return"*) echo "$last" >> "` + dir + `/keypress"; exit 0 ;;
+esac
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewSSH()
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{"host": "lin.lan"},
+		},
+	}
+	err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind:  "approve",
+		Extra: map[string]any{"allow": []any{"OK"}, "timeout": "3s"},
+	})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "keypress")); err != nil {
+		t.Fatalf("expected Return-key fallback, got: %v", err)
+	}
+}
+
+func TestGuiportApproveClicksFirstMatch(t *testing.T) {
+	dir := t.TempDir()
+	// Stub: succeed only when click-text matches "Allow", fail otherwise.
+	script := `#!/bin/sh
+if [ "$1" = "click-text" ] && [ "$2" = "Allow" ]; then
+  echo "click-text-args: $*" >> "` + dir + `/clicked"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "guiport"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewGuiport()
+	tgt := target.Target{}
+	err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind:  "approve",
+		Extra: map[string]any{"allow": []any{"OK", "Allow"}, "timeout": "3s"},
+	})
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "clicked")); err != nil {
+		t.Fatalf("expected click-text invocation, got: %v", err)
+	}
+}
+
+func TestGuiportApproveTimesOutWhenNothingMatches(t *testing.T) {
+	dir := t.TempDir()
+	// Stub: every click-text fails — no consent dialog present.
+	stubBinary(t, dir, "guiport", 1)
+	withPath(t, dir)
+
+	tr := NewGuiport()
+	tgt := target.Target{}
+	err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind:  "approve",
+		Extra: map[string]any{"allow": []any{"Allow"}, "timeout": "200ms"},
+	})
+	if err == nil {
+		t.Fatal("expected timeout error when no dialog matches")
+	}
+	if !strings.Contains(err.Error(), "no matching dialog") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestGuiportApproveDenyShortCircuitsAllow(t *testing.T) {
+	dir := t.TempDir()
+	// Stub: both "Allow" and "Don't Send" would succeed; deny should win
+	// because it's checked first.
+	script := `#!/bin/sh
+if [ "$1" = "click-text" ]; then
+  echo "$2" >> "` + dir + `/clicked"
+  exit 0
+fi
+exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "guiport"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewGuiport()
+	tgt := target.Target{}
+	if err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind: "approve",
+		Extra: map[string]any{
+			"allow":   []any{"Allow"},
+			"deny":    []any{"Don't Send"},
+			"timeout": "1s",
+		},
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "clicked"))
+	if err != nil {
+		t.Fatalf("read clicked: %v", err)
+	}
+	first := strings.SplitN(strings.TrimSpace(string(data)), "\n", 2)[0]
+	if first != "Don't Send" {
+		t.Fatalf("expected deny click first, got %q", first)
+	}
+}
+
 func TestABXGUIKinds(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "abx", 0)

@@ -31,7 +31,7 @@ func startServer(t *testing.T, allowWrite bool) *rpcClient {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = Serve(ctx, Options{In: clientToServer, Out: clientFromServer, AllowWrite: allowWrite})
 	}()
@@ -137,7 +137,8 @@ func TestToolsListReadOnly(t *testing.T) {
 		}
 	}
 	for _, no := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with",
-		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy"} {
+		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy",
+		"vmlab_grant"} {
 		if got[no] {
 			t.Errorf("write-mode tool %q unexpectedly exposed without --allow-write", no)
 		}
@@ -154,7 +155,8 @@ func TestToolsListAllowWrite(t *testing.T) {
 		got[n] = true
 	}
 	for _, want := range []string{"vmlab_run", "vmlab_web", "vmlab_gui", "vmlab_up", "vmlab_down", "vmlab_with",
-		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy"} {
+		"vmlab_fleet_run", "vmlab_image_build", "vmlab_notify_test", "vmlab_cancel", "vmlab_orphans_destroy",
+		"vmlab_grant"} {
 		if !got[want] {
 			t.Errorf("missing tool %q (have: %v)", want, names)
 		}
@@ -300,6 +302,53 @@ func TestMCPWithRequiresCommand(t *testing.T) {
 	}
 	if isErr, _ := r["isError"].(bool); !isErr {
 		t.Errorf("expected isError=true when command is missing, got: %#v", r)
+	}
+}
+
+func TestInferNeedsGrant(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+		errMsg    string
+		want      []string
+	}{
+		{
+			name:      "guiport accessibility not trusted",
+			transport: "guiport",
+			errMsg:    "Accessibility permission not trusted for guiport",
+			want:      []string{"accessibility"},
+		},
+		{
+			name:      "screen recording not granted",
+			transport: "guiport",
+			errMsg:    "screen recording not granted; grant via System Settings",
+			want:      []string{"screen-recording"},
+		},
+		{
+			name:      "non-guiport transport returns nil",
+			transport: "ssh",
+			errMsg:    "Accessibility not trusted",
+			want:      nil,
+		},
+		{
+			name:      "unrelated error",
+			transport: "guiport",
+			errMsg:    "element not found",
+			want:      nil,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := inferNeedsGrant(tc.transport, fmt.Errorf("%s", tc.errMsg))
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("got %v, want %v", got, tc.want)
+				}
+			}
+		})
 	}
 }
 

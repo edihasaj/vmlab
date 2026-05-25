@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (agent grants — zero-touch for in-app, single-tap for TCC)
+
+- **`gui:approve` step (cross-OS)** — polls for any consent dialog and
+  clicks the first matching button. Defaults cover the buttons most
+  consent prompts ship with (`Allow`, `OK`, `Continue`, `Yes`, `Trust`,
+  `Open`, …). Override via `extra.allow` / `extra.deny` (deny checked
+  first so explicit refuse pre-empts a generic allow). `extra.timeout`
+  bounds the poll. Fully automatic — no human in this loop:
+  ```yaml
+  - gui: { kind: approve, allow: ["Camera", "Notifications"], timeout: 10s }
+  ```
+  Wired into three transports:
+  - **`guiport` (macOS)** — AX click-text per label, full button-name match.
+  - **`ssh-windows`** — UIA Name-substring per label, full button-name match.
+    UAC's secure desktop remains unreachable by design.
+  - **`ssh` (Linux X11)** — xdotool window-name match per label, plus a
+    Return-key fallback (the default-button activation gesture). Opt-out
+    via `extra.useDefaultKey: false` for strict label matching on guests
+    where AT-SPI tooling is installed.
+- **`vmlab grant --auto`** — after opening the Privacy & Security pane,
+  vmlab activates System Settings and asks guiport to `click-text` the
+  binary name so the row is focused/scrolled-to. The human's only step
+  is the Touch ID prompt that follows the toggle. Requires guiport to
+  already have Accessibility (the bootstrap grant). Best-effort: if
+  guiport isn't on PATH or the pane layout doesn't match, the command
+  falls back to the existing "open pane and poll" behaviour.
+- **MCP `vmlab_grant` tool** — same flags as the CLI (binary, scope,
+  auto, noWait, timeout). Returns `needsHumanTouchID: true` while
+  polling so an agent UI can render a one-line prompt instead of
+  silently waiting.
+- **`needsGrant` in `vmlab_gui` errors** — when a guiport / undermouse
+  call fails with an "Accessibility not trusted" / "screen recording not
+  granted" style message, the MCP error payload includes
+  `needsGrant: ["accessibility"]` (etc.), so an agent can chain straight
+  into `vmlab_grant` without parsing free-form text.
+
+### Added (hardening — agent-driven UI/test loops)
+
+- Per-step `retries:`, `retry_delay:`, and `timeout:` knobs on every action
+  step (`run`/`assert`/`exec`/`install`/`sync`/`gui`). A failure (non-zero
+  exit or transport error) re-runs the inner action up to N times with
+  `retry_delay` between attempts; `timeout` bounds each individual attempt
+  via `context.WithTimeout`. Removes the need to wrap every flaky UI click
+  in a shell retry loop. See [`docs/flows.md`](docs/flows.md#step-knobs).
+- MCP write-mode handlers (`vmlab_up`, `vmlab_down`, `vmlab_with`) now
+  acquire the same per-instance file lock the CLI uses, so an MCP agent
+  can't race a local `vmlab with` (or another MCP client) on the same VM.
+
+### Fixed (hardening)
+
+- `runExternal` now surfaces context cancellation distinctly from process
+  exit. Previously a ctx-killed `ssh` (or any external tool) reported
+  `exit=-1` with no message; doctors and flows now report
+  `ssh: context deadline exceeded after Nms` so agents can act on it.
+- `ssh` / `ssh-windows` doctor messages include the first line of stderr,
+  so `vmlab doctor` surfaces "connect to host X port 22: Operation timed
+  out" instead of the bare exit code.
+- `adb` doctor message includes adb's stderr when `get-state` fails,
+  instead of the static "device offline?" guess.
+- Default `vmlab doctor --timeout` raised from 10s to 20s; the previous
+  default could race ssh's own `ConnectTimeout=10` and kill the probe
+  before it returned a useful error.
+- Parallels `waitReady` deadline check now also fires when the outer
+  context cancels — previously a slow CI runner could surface
+  "context deadline exceeded" instead of "waitReady: timed out after Ns",
+  hiding the actual cause. Hardened by `TestWaitReadyTimeout`.
+
 ### Added (M5+ — artifact auto-delivery, closes the build→ship loop)
 
 - `artifact:` step gained `output:` (host path per OS where the build
