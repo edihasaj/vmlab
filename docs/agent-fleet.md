@@ -37,8 +37,12 @@ own; vmlab is the connective tissue.
 
 | Surface | Owned by | Used from vmlab via |
 |---|---|---|
-| Desktop AX/clicks/screenshots (macOS) | guiport | `transport: guiport` |
-| LLM context capture + safe action plans | undermouse (`um` CLI) | `transport: undermouse` |
+| Desktop UI (macOS, incl. Electron) | guiport | `transport: guiport` |
+| Desktop UI (Linux, X11/Xvfb, incl. Electron) | xdotool + ImageMagick | `transport: ssh` with `ssh.display` set |
+| Desktop UI (Windows, incl. Electron) | PowerShell + UIAutomation + SendKeys | `transport: ssh-windows` (input verbs) or `parallels-guest` (read-only verbs) |
+| Mobile (Android) | adb | `transport: adb` |
+| Mobile (iOS sim) | simctl / idb / maestro | `transport: simctl|idb|maestro` |
+| LLM context + safe action plans | undermouse (`um` CLI) | `transport: undermouse` |
 | Headless browser / web pixels | abx (Playwright) | `transport: abx` |
 | Linux/Windows shell | ssh / crabbox / parallels-guest | `transport: ssh|crabbox|parallels-guest` |
 | Coding agent memory | recall | not a transport — installed *on* targets and verified by `examples/flows/recall-cross-os.yaml` |
