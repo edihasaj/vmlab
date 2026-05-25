@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (live log streaming over MCP)
+
+- **`vmlab_run_status` MCP tool** (read-only) — returns a run's running
+  flag, partial target stats, and exit code when finished. Cheap enough
+  to poll once a second from an agent while a long flow is in flight.
+- **`vmlab_log_stream` MCP tool** (read-only) — cursor-based tail of a
+  run's per-target stdout/stderr logs. Long-polls server-side up to
+  `waitSeconds` for new bytes (250ms ticks; no fsnotify dep). Cursor
+  is an opaque string the agent passes back to resume; vmlab handles
+  the per-target byte-offset bookkeeping internally.
+- **`vmlab_run background: true`** — detaches the run via `setsid` so it
+  survives the MCP server going away mid-flow. Pre-allocates the run
+  id via `VMLAB_RUN_ID`, writes a seed `running.lock`, returns the id
+  immediately. Agent then polls with the two read tools above.
+- Evidence: new `RunStatus`, `ReadLogChunks`, `LogCursor` exports for
+  any caller that wants polling primitives outside MCP.
+
 ### Added (cloud maturity + operational/UX gaps)
 
 - **Cost cap on Up** — every instance accepts a `budget:` block; vmlab's

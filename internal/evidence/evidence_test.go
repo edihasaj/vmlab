@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,6 +78,74 @@ func TestPrune(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("expected 1 pruned, got %d", n)
+	}
+}
+
+func TestStatusReflectsRunningThenFinished(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	if err := r.MarkRunning(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := Status(r.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Running {
+		t.Fatal("expected running=true after MarkRunning")
+	}
+	if st.ExitCode != nil {
+		t.Errorf("running run should not have ExitCode yet")
+	}
+	if _, err := r.Finish(7); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Status(r.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Running {
+		t.Fatal("expected running=false after Finish")
+	}
+	if st.ExitCode == nil || *st.ExitCode != 7 {
+		t.Errorf("expected ExitCode=7, got %v", st.ExitCode)
+	}
+}
+
+func TestLogCursorRoundTrip(t *testing.T) {
+	c := LogCursor{"a:stdout": 123, "b:stderr": 456}
+	out := ParseLogCursor(c.String())
+	if out["a:stdout"] != 123 || out["b:stderr"] != 456 {
+		t.Fatalf("round trip lost data: %v", out)
+	}
+}
+
+func TestReadLogChunksTailsNewBytes(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	out, errW, logs, err := r.TargetWriters("alpha", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	_, _ = out.Write([]byte("hello "))
+	_, _ = errW.Write([]byte("oops "))
+
+	chunks, cursor, err := ReadLogChunks(r.Dir, nil, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks (stdout+stderr), got %d", len(chunks))
+	}
+	// Write more, then resume from the cursor.
+	_, _ = out.Write([]byte("world"))
+	chunks2, _, err := ReadLogChunks(r.Dir, cursor, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks2) != 1 || chunks2[0].Stream != "stdout" || chunks2[0].Bytes != "world" {
+		t.Fatalf("expected only the new stdout slice 'world', got %+v", chunks2)
 	}
 }
 

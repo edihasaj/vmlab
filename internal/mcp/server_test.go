@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/edihasaj/vmlab/internal/evidence"
 )
 
 // rpcClient is a tiny stdio JSON-RPC harness used to exercise the SDK-backed
@@ -302,6 +304,72 @@ func TestMCPWithRequiresCommand(t *testing.T) {
 	}
 	if isErr, _ := r["isError"].(bool); !isErr {
 		t.Errorf("expected isError=true when command is missing, got: %#v", r)
+	}
+}
+
+func TestRunStatusReadsRunningLock(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Lay down a fake run.
+	runsDir := filepath.Join(home, ".vmlab", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := evidence.New(runsDir)
+	if err := r.MarkRunning(); err != nil {
+		t.Fatal(err)
+	}
+
+	c := startServer(t, false)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_run_status",
+		"arguments": map[string]any{"runId": r.ID},
+	}, 200)
+	text := toolText(t, resp)
+	if !strings.Contains(text, `"running": true`) {
+		t.Errorf("expected running=true while lock is held, got: %s", text)
+	}
+	if _, err := r.Finish(0); err != nil {
+		t.Fatal(err)
+	}
+	resp = c.call(t, "tools/call", map[string]any{
+		"name":      "vmlab_run_status",
+		"arguments": map[string]any{"runId": r.ID},
+	}, 201)
+	text = toolText(t, resp)
+	if !strings.Contains(text, `"running": false`) {
+		t.Errorf("expected running=false after Finish, got: %s", text)
+	}
+}
+
+func TestLogStreamTailsNewBytes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	runsDir := filepath.Join(home, ".vmlab", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := evidence.New(runsDir)
+	out, _, logs, err := r.TargetWriters("alpha", io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logs.Close()
+	_, _ = out.Write([]byte("first chunk"))
+
+	c := startServer(t, false)
+	c.initialize(t)
+	resp := c.call(t, "tools/call", map[string]any{
+		"name": "vmlab_log_stream",
+		"arguments": map[string]any{
+			"runId":       r.ID,
+			"waitSeconds": 0,
+		},
+	}, 300)
+	text := toolText(t, resp)
+	if !strings.Contains(text, "first chunk") {
+		t.Errorf("expected first chunk in log stream, got: %s", text)
 	}
 }
 

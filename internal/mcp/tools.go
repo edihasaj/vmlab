@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
@@ -48,6 +50,22 @@ func registerTools(s *mcpserver.MCPServer, opts Options) {
 			mcpgo.WithDescription("List configured provider instances (read-only).")),
 		handleInstances,
 	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_run_status",
+			mcpgo.WithDescription("Snapshot of a run: running flag, partial target stats, exit code if finished. Cheap to poll while a long flow is in flight."),
+			mcpgo.WithString("runId", mcpgo.Required(), mcpgo.Description("Run identifier (returned by vmlab_run / vmlab_matrix_run)"))),
+		handleRunStatus,
+	)
+	s.AddTool(
+		mcpgo.NewTool("vmlab_log_stream",
+			mcpgo.WithDescription("Tail new log bytes from a run, cursor-based. Pass back the returned cursor on the next call to resume. With waitSeconds > 0 the call long-polls for new bytes (server-side sleep) up to the timeout."),
+			mcpgo.WithString("runId", mcpgo.Required(), mcpgo.Description("Run identifier")),
+			mcpgo.WithString("cursor", mcpgo.Description("Opaque cursor from a prior call; empty starts at byte 0 of every (target, stream)")),
+			mcpgo.WithString("target", mcpgo.Description("Restrict to one target name; default: all targets")),
+			mcpgo.WithNumber("maxBytes", mcpgo.Description("Per-stream cap (default 65536; 0 = no cap)")),
+			mcpgo.WithNumber("waitSeconds", mcpgo.Description("Long-poll budget — server waits up to this many seconds for new bytes (default 0 = return immediately)"))),
+		handleLogStream,
+	)
 
 	if opts.allows("vmlab_up") {
 		s.AddTool(
@@ -80,12 +98,13 @@ func registerTools(s *mcpserver.MCPServer, opts Options) {
 	if opts.allows("vmlab_run") {
 		s.AddTool(
 			mcpgo.NewTool("vmlab_run",
-				mcpgo.WithDescription("Run a shell command or YAML flow against a target selector."),
+				mcpgo.WithDescription("Run a shell command or YAML flow against a target selector. With background=true, detaches and returns the runId immediately — pair with vmlab_run_status + vmlab_log_stream to monitor."),
 				mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("Target selector")),
 				mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
 				mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
 				mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent targets")),
-				mcpgo.WithBoolean("failFast", mcpgo.Description("Stop launching new work after first failure"))),
+				mcpgo.WithBoolean("failFast", mcpgo.Description("Stop launching new work after first failure")),
+				mcpgo.WithBoolean("background", mcpgo.Description("Detach: return runId now, keep running after this MCP call returns"))),
 			handleRun,
 		)
 	}
@@ -178,12 +197,16 @@ func handleRun(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 	flowPath := stringArg(req, "flowPath", "")
 	maxParallel := intArg(req, "maxParallel", 0)
 	failFast := boolArg(req, "failFast", false)
+	background := boolArg(req, "background", false)
 
 	if sel == "" {
 		return helperError("selector is required"), nil
 	}
 	if (cmdLine == "") == (flowPath == "") {
 		return helperError("provide exactly one of command or flowPath"), nil
+	}
+	if background {
+		return spawnDetachedRun(ctx, sel, cmdLine, flowPath, maxParallel, failFast)
 	}
 
 	_, paths, err := config.Load()
@@ -301,6 +324,72 @@ func handleInstances(_ context.Context, _ mcpgo.CallToolRequest) (*mcpgo.CallToo
 		return helperError(err.Error()), nil
 	}
 	return helperResult(mustJSON(r.All())), nil
+}
+
+func handleRunStatus(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := stringArg(req, "runId", "")
+	if id == "" {
+		return helperError("runId is required"), nil
+	}
+	cfg, _, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	st, err := evidence.Status(filepath.Join(cfg.RunsDir, id))
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	return helperResult(mustJSON(st)), nil
+}
+
+// handleLogStream slices new bytes from the run's per-target stdout/stderr
+// logs since the cursor the caller passed back. Long-polls up to
+// waitSeconds — sleeps in 250ms ticks and re-reads. Cheap enough to run
+// inline; no goroutine or fsnotify required for vmlab's run rates.
+func handleLogStream(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+	id := stringArg(req, "runId", "")
+	if id == "" {
+		return helperError("runId is required"), nil
+	}
+	target := stringArg(req, "target", "")
+	maxBytes := intArg(req, "maxBytes", 65536)
+	waitSecs := intArg(req, "waitSeconds", 0)
+	cursorStr := stringArg(req, "cursor", "")
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	runDir := filepath.Join(cfg.RunsDir, id)
+	cursor := evidence.ParseLogCursor(cursorStr)
+
+	deadline := time.Now().Add(time.Duration(waitSecs) * time.Second)
+	for {
+		chunks, next, err := evidence.ReadLogChunks(runDir, cursor, target, maxBytes)
+		if err != nil {
+			return helperError(err.Error()), nil
+		}
+		st, _ := evidence.Status(runDir)
+		if len(chunks) > 0 || waitSecs == 0 || !st.Running || time.Now().After(deadline) {
+			return helperResult(mustJSON(map[string]any{
+				"runId":    id,
+				"chunks":   chunks,
+				"cursor":   next.String(),
+				"complete": !st.Running,
+				"exitCode": st.ExitCode,
+			})), nil
+		}
+		// No new bytes yet, run still active, budget remains — short nap.
+		select {
+		case <-ctx.Done():
+			return helperResult(mustJSON(map[string]any{
+				"runId":  id,
+				"cursor": cursor.String(),
+				"error":  ctx.Err().Error(),
+			})), nil
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 func handleUp(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -607,4 +696,83 @@ func lastFlowExit(steps []flow.StepResult, err error) int {
 		return 1
 	}
 	return 0
+}
+
+// spawnDetachedRun forks `vmlab run …` so it survives the MCP server going
+// away mid-flow. Pre-allocates the run-id via VMLAB_RUN_ID, writes
+// running.lock so vmlab_run_status reports `running: true` even before the
+// subprocess has set it up, and returns the id immediately.
+//
+// Detach pattern: setsid on Unix puts the child in its own session so a
+// parent SIGHUP doesn't propagate; Process.Release() lets the child outlive
+// the goroutine that started it without leaving a zombie.
+func spawnDetachedRun(_ context.Context, sel, cmdLine, flowPath string, maxParallel int, failFast bool) (*mcpgo.CallToolResult, error) {
+	cfg, paths, err := config.Load()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	if err := config.EnsureDirs(paths); err != nil {
+		return helperError(err.Error()), nil
+	}
+	runID := newRunID()
+	runDir := filepath.Join(cfg.RunsDir, runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		return helperError(err.Error()), nil
+	}
+	// Seed a running.lock so vmlab_run_status reports correctly even before
+	// the spawned subprocess gets there. The subprocess will overwrite it
+	// with its own PID via evidence.MarkRunning.
+	seed, _ := json.MarshalIndent(map[string]any{
+		"pid":     0,
+		"started": time.Now().UTC(),
+		"cmd":     cmdLine,
+		"flow":    flowPath,
+	}, "", "  ")
+	_ = os.WriteFile(filepath.Join(runDir, "running.lock"), seed, 0o644)
+
+	bin, err := vmlabExecutable()
+	if err != nil {
+		return helperError(err.Error()), nil
+	}
+	args := []string{"run", sel}
+	if flowPath != "" {
+		args = append(args, flowPath)
+	} else {
+		args = append(args, "--", "sh", "-lc", cmdLine)
+	}
+	if maxParallel > 0 {
+		args = append(args, "--max-parallel", fmt.Sprintf("%d", maxParallel))
+	}
+	if failFast {
+		args = append(args, "--fail-fast")
+	}
+	cmd := newDetachedCmd(bin, args)
+	cmd.Env = append(os.Environ(), "VMLAB_RUN_ID="+runID)
+	// stdio → /dev/null; the run writes everything to the evidence dir.
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		_ = os.Remove(filepath.Join(runDir, "running.lock"))
+		return helperError(err.Error()), nil
+	}
+	// Release so the child outlives this MCP call.
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Release()
+
+	return helperResult(mustJSON(map[string]any{
+		"runId":      runID,
+		"pid":        pid,
+		"background": true,
+		"runDir":     runDir,
+		"hint":       "poll vmlab_run_status and vmlab_log_stream with this runId",
+	})), nil
+}
+
+// newRunID mirrors evidence.newID() — duplicated here so we can stamp the
+// ID before the subprocess starts, then pass it via $VMLAB_RUN_ID.
+func newRunID() string {
+	return fmt.Sprintf("%s-%08x",
+		time.Now().UTC().Format("20060102T150405"),
+		time.Now().UnixNano()&0xffffffff)
 }

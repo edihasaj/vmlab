@@ -64,9 +64,16 @@ type Run struct {
 	meta RunMeta
 }
 
-// New creates a fresh run dir under root.
+// New creates a fresh run dir under root. Honours $VMLAB_RUN_ID when set so
+// a caller (today: MCP background mode) can pre-allocate an ID, return it to
+// the agent, and trust the spawned subprocess to land in the same evidence
+// directory. The agent then polls evidence by that ID without racing for
+// the "most recent" run.
 func New(root string) (*Run, error) {
-	id := newID()
+	id := os.Getenv("VMLAB_RUN_ID")
+	if id == "" {
+		id = newID()
+	}
 	dir := filepath.Join(root, id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -253,6 +260,196 @@ func List(root string) ([]RunMeta, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out, nil
+}
+
+// RunStatus is a snapshot of a run: still running, what the per-target
+// stats look like so far, exit code if finished. Returned by Status() so
+// MCP / CLI callers can poll without re-parsing meta.json every time.
+type RunStatus struct {
+	ID         string          `json:"id"`
+	Running    bool            `json:"running"`
+	StartedAt  time.Time       `json:"startedAt"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+	DurationMs int64           `json:"durationMs"`
+	ExitCode   *int            `json:"exitCode,omitempty"`
+	Targets    []TargetSummary `json:"targets,omitempty"`
+	Cmd        string          `json:"cmd,omitempty"`
+	Flow       string          `json:"flow,omitempty"`
+	Selector   string          `json:"selector,omitempty"`
+	HolderPID  int             `json:"holderPid,omitempty"`
+}
+
+// Status returns a snapshot for the run at runDir. Running is determined
+// by the presence of running.lock (set by MarkRunning, cleared by Finish);
+// finished runs return their final meta.json verbatim.
+func Status(runDir string) (RunStatus, error) {
+	out := RunStatus{}
+	st, runErr := ReadRunningState(runDir)
+	running := runErr == nil
+	meta, metaErr := Read(runDir)
+	if metaErr != nil && !running {
+		return out, metaErr
+	}
+	out.ID = meta.ID
+	out.StartedAt = meta.StartedAt
+	out.Cmd = meta.Cmd
+	out.Flow = meta.Flow
+	out.Selector = meta.Selector
+	out.Targets = meta.Targets
+	out.Running = running
+	if running {
+		out.HolderPID = st.PID
+		if !st.Started.IsZero() && out.StartedAt.IsZero() {
+			out.StartedAt = st.Started
+		}
+		return out, nil
+	}
+	// Finished — meta.json reflects the final state.
+	out.FinishedAt = &meta.FinishedAt
+	out.DurationMs = meta.DurationMs
+	ec := meta.ExitCode
+	out.ExitCode = &ec
+	return out, nil
+}
+
+// LogCursor encodes per-target byte offsets so a streaming caller can
+// resume mid-file across multiple ReadLogChunk calls. Wire format is a
+// compact comma list: `<target>:<offset>[,<target>:<offset>…]`.
+//
+// stream is appended in the offset key (e.g. `lin:stdout:12345`) so the
+// two log streams are tracked independently. Cursors are opaque to the
+// agent — vmlab parses them; agents just echo what they got back.
+type LogCursor map[string]int64
+
+// ParseLogCursor decodes the wire string. An empty input returns an empty
+// cursor (start of every file).
+func ParseLogCursor(s string) LogCursor {
+	out := LogCursor{}
+	if s == "" {
+		return out
+	}
+	for _, part := range strings.Split(s, ",") {
+		i := strings.LastIndex(part, ":")
+		if i <= 0 {
+			continue
+		}
+		var off int64
+		fmt.Sscanf(part[i+1:], "%d", &off)
+		out[part[:i]] = off
+	}
+	return out
+}
+
+// String emits the cursor in the wire format. Sorted so the same set of
+// offsets always produces the same string (helps with idempotency tests).
+func (c LogCursor) String() string {
+	keys := make([]string, 0, len(c))
+	for k := range c {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s:%d", k, c[k]))
+	}
+	return strings.Join(parts, ",")
+}
+
+// LogChunk is one batch of new bytes pulled from a target's log file.
+type LogChunk struct {
+	Target string `json:"target"`
+	Stream string `json:"stream"` // "stdout" | "stderr"
+	Bytes  string `json:"bytes"`
+	Offset int64  `json:"offset"` // post-read offset for this (target, stream)
+}
+
+// ReadLogChunks slices new bytes from every (target, stream) pair under
+// runDir/targets/, starting at the offsets in cursor. Returns the chunks
+// plus an updated cursor. maxBytesPerStream caps the per-stream slice so
+// a noisy log doesn't return a megabyte in one MCP call (0 = no cap).
+//
+// When targetFilter is non-empty, only that target is read — useful for
+// agents that want one target's stream at a time.
+func ReadLogChunks(runDir string, cursor LogCursor, targetFilter string, maxBytesPerStream int) ([]LogChunk, LogCursor, error) {
+	targetsDir := filepath.Join(runDir, "targets")
+	entries, err := os.ReadDir(targetsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, cursor, nil
+		}
+		return nil, cursor, err
+	}
+	next := LogCursor{}
+	for k, v := range cursor {
+		next[k] = v
+	}
+	var chunks []LogChunk
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if targetFilter != "" && name != targetFilter {
+			continue
+		}
+		for _, stream := range []string{"stdout", "stderr"} {
+			key := name + ":" + stream
+			path := filepath.Join(targetsDir, name, stream+".log")
+			data, off, err := readSince(path, cursor[key], maxBytesPerStream)
+			if err != nil {
+				continue
+			}
+			next[key] = off
+			if len(data) > 0 {
+				chunks = append(chunks, LogChunk{
+					Target: name,
+					Stream: stream,
+					Bytes:  string(data),
+					Offset: off,
+				})
+			}
+		}
+	}
+	return chunks, next, nil
+}
+
+// readSince opens path, seeks to from, and reads up to maxBytes (0 = all).
+// Returns the slurped bytes plus the new offset. Missing file is treated
+// as empty — the target's log may not exist yet for early polling.
+func readSince(path string, from int64, maxBytes int) ([]byte, int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, from, nil
+		}
+		return nil, from, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, from, err
+	}
+	size := st.Size()
+	if from > size {
+		// File rotated/truncated underneath us — reset to start.
+		from = 0
+	}
+	if from >= size {
+		return nil, size, nil
+	}
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		return nil, from, err
+	}
+	toRead := size - from
+	if maxBytes > 0 && toRead > int64(maxBytes) {
+		toRead = int64(maxBytes)
+	}
+	buf := make([]byte, toRead)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		return nil, from, err
+	}
+	return buf[:n], from + int64(n), nil
 }
 
 // Bundle creates a zip of the run dir at outZip.
