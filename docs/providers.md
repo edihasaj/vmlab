@@ -12,10 +12,36 @@ Instance (YAML)  ──▶  Provider.Up()  ──▶  Target  ──▶  Transpo
 
 ## Built-in providers
 
-| Provider | Backend | Default transport | Default `dispose.on_success` | Status |
-|---|---|---|---|---|
-| `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` | live-smoked |
-| `hetzner` | `hcloud` CLI | `ssh` | `destroy` | **MVP — code + stub tests; live-token validation pending** |
+| Provider | Backend | Default transport | Default `dispose.on_success` | Snapshots | Status |
+|---|---|---|---|---|---|
+| `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` | ✓ native | live-smoked |
+| `hetzner` | `hcloud` CLI | `ssh` | `destroy` | ✓ image-based | code + tests; `vmlab provider validate hetzner` dry-runs the token |
+| `aws` | `aws` CLI | `ssh` | `destroy` | ✗ (planned: AMI-based) | MVP — `vmlab snapshot` returns "not supported" until added |
+| `azure` | `az` CLI | `ssh` | `destroy` | ✗ (planned: managed image) | MVP — same caveat |
+| `gcp` | `gcloud` CLI | `ssh` | `destroy` | ✗ (planned: machine image) | MVP — same caveat |
+| `tart` | `tart` CLI | `ssh` | `keep` | ✗ (Tart has clone but no in-place snapshot) | MVP |
+| `windows` | local Windows / Hyper-V | `ssh-windows` | `keep` | ✗ | MVP |
+
+`vmlab snapshot ls/save/restore/rm` type-asserts the provider for `Snapshotter`
+and returns a clear `provider X does not support snapshots` error when the
+capability is missing — flows that need snapshots fail loudly instead of
+silently succeeding with no checkpoint.
+
+### Cost caps (`budget.hourlyUSD`)
+
+Every instance accepts a `budget:` block; vmlab refuses Up if the provider's
+own hourly rate (via the `Priced` interface) exceeds the cap. Providers
+that don't know their rate (or don't implement `Priced`) treat the cap as
+documentation only — no provider-quoted price, no enforcement, no surprise
+block. Set the cap when you mean "guard me against a misconfigured region /
+instance type."
+
+```yaml
+name: gpu-burst
+provider: aws
+budget:
+  hourlyUSD: 2.50   # refuse Up if AWS quotes > $2.50/hr
+```
 
 ## Instance config
 

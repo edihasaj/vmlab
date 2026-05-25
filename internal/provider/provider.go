@@ -108,6 +108,79 @@ type Provider interface {
 	Down(ctx context.Context, i Instance, d Dispose) error
 }
 
+// Priced is an optional provider capability for backends that know their
+// per-instance hourly rate. EnforceBudget consults this before Up so a
+// misconfigured instance type can't quietly burn money.
+//
+// Implementations should return ("", 0, nil) when the rate genuinely
+// can't be derived (custom-priced contracts, unknown region, etc.) —
+// EnforceBudget treats the missing rate as "skip the check" rather than
+// failing closed, so a half-known price table doesn't block every Up.
+type Priced interface {
+	HourlyUSD(ctx context.Context, i Instance) (currency string, rate float64, err error)
+}
+
+// ErrBudgetExceeded is returned by EnforceBudget when the provider's
+// resolved hourly rate is above the instance's budget.hourlyUSD cap.
+type ErrBudgetExceeded struct {
+	Instance  string
+	CapUSD    float64
+	ActualUSD float64
+}
+
+func (e ErrBudgetExceeded) Error() string {
+	return fmt.Sprintf("budget: instance %q rate $%.4f/hr exceeds cap $%.4f/hr", e.Instance, e.ActualUSD, e.CapUSD)
+}
+
+// Validator is an optional capability for providers that can dry-run a
+// read-only API call to confirm credentials work without firing any
+// mutations. Used by `vmlab provider validate <name>`.
+//
+// Implementations should pick the cheapest read endpoint the provider
+// offers (e.g. `hcloud server-type list`, `aws ec2 describe-regions`,
+// `gcloud auth list`) so the check is fast and free.
+type Validator interface {
+	Validate(ctx context.Context) error
+}
+
+// UpEnforced is the wrapper every caller should use instead of p.Up directly.
+// It runs EnforceBudget first, then calls Up. Centralising this keeps the
+// budget check from being skipped on a new callsite — easier than ensuring
+// 8 callers remember the guard.
+func UpEnforced(ctx context.Context, p Provider, i Instance) (target.Target, EnsureResult, error) {
+	if err := EnforceBudget(ctx, p, i); err != nil {
+		return target.Target{}, EnsureResult{}, err
+	}
+	return p.Up(ctx, i)
+}
+
+// EnforceBudget checks the instance's budget.hourlyUSD against either the
+// provider's own price quote (when it implements Priced) or the operator-
+// provided override on the BudgetCfg itself. Returns nil when no cap is
+// set or no rate is known. Providers should call this near the top of Up
+// (after Status, before any state-mutating API call).
+func EnforceBudget(ctx context.Context, p Provider, i Instance) error {
+	if i.Budget.HourlyUSD <= 0 {
+		return nil
+	}
+	rate := i.Budget.HourlyUSD // default: if Priced has no opinion, the operator's own number is the floor
+	rate = 0
+	if priced, ok := p.(Priced); ok {
+		if _, r, err := priced.HourlyUSD(ctx, i); err == nil && r > 0 {
+			rate = r
+		}
+	}
+	if rate == 0 {
+		// No provider-known rate; the budget cap acts as documentation
+		// only. Don't fail — the operator already declared the intent.
+		return nil
+	}
+	if rate > i.Budget.HourlyUSD {
+		return ErrBudgetExceeded{Instance: i.Name, CapUSD: i.Budget.HourlyUSD, ActualUSD: rate}
+	}
+	return nil
+}
+
 // ReadyWaiter is an optional provider capability for re-polling guest
 // readiness without doing a full Up cycle. Useful after a reboot mid-flow
 // or before driving a fresh-booted box.

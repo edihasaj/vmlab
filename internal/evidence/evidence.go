@@ -312,6 +312,82 @@ func readSteps(path string) ([]Step, error) {
 	return out, nil
 }
 
+// dirSize returns the total bytes occupied by a single run directory.
+func dirSize(root string) (int64, error) {
+	var total int64
+	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+// runInfo bundles a run's path, mtime, and size — used by PruneToFitSize so
+// we read each dir once and sort by age in memory.
+type runInfo struct {
+	dir       string
+	startedAt time.Time
+	size      int64
+}
+
+// PruneToFitSize keeps deleting oldest runs until the total size of `root`
+// is at most maxBytes. Pass 0 to skip the size check. Returns the number
+// of run directories deleted.
+//
+// Combined with PruneOlderThan in `vmlab evidence prune --auto` so the
+// retention policy honours both age and size:
+//
+//  1. age first (gets rid of definitely-stale)
+//  2. size second (keeps the dir under cap even when traffic spikes)
+func PruneToFitSize(root string, maxBytes int64) (int, error) {
+	if maxBytes <= 0 {
+		return 0, nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	runs := make([]runInfo, 0, len(entries))
+	var total int64
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		m, err := Read(dir)
+		if err != nil {
+			continue
+		}
+		sz, _ := dirSize(dir)
+		total += sz
+		runs = append(runs, runInfo{dir: dir, startedAt: m.StartedAt, size: sz})
+	}
+	if total <= maxBytes {
+		return 0, nil
+	}
+	// Oldest first — we trim from the head.
+	sort.Slice(runs, func(i, j int) bool { return runs[i].startedAt.Before(runs[j].startedAt) })
+	deleted := 0
+	for _, r := range runs {
+		if total <= maxBytes {
+			break
+		}
+		if err := os.RemoveAll(r.dir); err == nil {
+			total -= r.size
+			deleted++
+		}
+	}
+	return deleted, nil
+}
+
 // PruneOlderThan removes runs older than the cutoff.
 func PruneOlderThan(root string, cutoff time.Time) (int, error) {
 	entries, err := os.ReadDir(root)

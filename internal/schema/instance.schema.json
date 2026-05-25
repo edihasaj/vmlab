@@ -47,6 +47,15 @@
       },
       "additionalProperties": false
     },
+    "budget": {
+      "type": "object",
+      "description": "Soft cost ceiling vmlab enforces before Up. Providers that implement Priced compare their own hourly rate against hourlyUSD; if exceeded, Up returns ErrBudgetExceeded.",
+      "properties": {
+        "hourlyUSD": { "type": "number", "minimum": 0 },
+        "dailyUSD": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "mounts": {
       "type": "array",
       "items": {

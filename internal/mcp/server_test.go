@@ -305,6 +305,43 @@ func TestMCPWithRequiresCommand(t *testing.T) {
 	}
 }
 
+func TestAllowedToolsRegistersOnlyListed(t *testing.T) {
+	// Spin a server with AllowedTools=["vmlab_run"]. Confirm vmlab_run is
+	// listed but vmlab_orphans_destroy (also a write tool) is not.
+	clientToServer, serverIn := io.Pipe()
+	serverOut, clientFromServer := io.Pipe()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = Serve(ctx, Options{
+			In:           clientToServer,
+			Out:          clientFromServer,
+			AllowedTools: []string{"vmlab_run"},
+		})
+	}()
+	c := &rpcClient{in: serverIn, out: bufio.NewReader(serverOut)}
+	t.Cleanup(func() {
+		_ = serverIn.Close()
+		_ = clientFromServer.Close()
+	})
+	c.initialize(t)
+	resp := c.call(t, "tools/list", map[string]any{}, 99)
+	names := toolNames(resp)
+	got := map[string]bool{}
+	for _, n := range names {
+		got[n] = true
+	}
+	if !got["vmlab_run"] {
+		t.Errorf("vmlab_run missing from AllowedTools=[vmlab_run]: %v", names)
+	}
+	if got["vmlab_orphans_destroy"] {
+		t.Errorf("vmlab_orphans_destroy registered without explicit allow: %v", names)
+	}
+	if got["vmlab_up"] {
+		t.Errorf("vmlab_up registered without explicit allow: %v", names)
+	}
+}
+
 func TestInferNeedsGrant(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -23,8 +23,9 @@ import (
 )
 
 // registerTools wires every vmlab MCP tool into the server. Read-only tools
-// are always available; write tools require allowWrite.
-func registerTools(s *mcpserver.MCPServer, allowWrite bool) {
+// are always available; write tools are gated by opts (AllowWrite for the
+// "all writes" shorthand, AllowedTools for per-tool granularity).
+func registerTools(s *mcpserver.MCPServer, opts Options) {
 	s.AddTool(
 		mcpgo.NewTool("vmlab_targets",
 			mcpgo.WithDescription("List configured targets with their tags and transports.")),
@@ -48,62 +49,69 @@ func registerTools(s *mcpserver.MCPServer, allowWrite bool) {
 		handleInstances,
 	)
 
-	if !allowWrite {
-		return
+	if opts.allows("vmlab_up") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_up",
+				mcpgo.WithDescription("Bring a provider instance to running (idempotent)."),
+				mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name"))),
+			handleUp,
+		)
 	}
-
-	s.AddTool(
-		mcpgo.NewTool("vmlab_up",
-			mcpgo.WithDescription("Bring a provider instance to running (idempotent)."),
-			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name"))),
-		handleUp,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_down",
-			mcpgo.WithDescription("Dispose of a provider instance (idempotent)."),
-			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
-			mcpgo.WithString("dispose", mcpgo.Description("keep|suspend|poweroff|destroy"))),
-		handleDown,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_with",
-			mcpgo.WithDescription("Bring an instance up, run a command, restore prior state."),
-			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
-			mcpgo.WithArray("command", mcpgo.Required(),
-				mcpgo.Items(map[string]any{"type": "string"})),
-			mcpgo.WithString("dispose", mcpgo.Description("Override disposition on success"))),
-		handleWith,
-	)
-
-	s.AddTool(
-		mcpgo.NewTool("vmlab_run",
-			mcpgo.WithDescription("Run a shell command or YAML flow against a target selector."),
-			mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("Target selector")),
-			mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
-			mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
-			mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent targets")),
-			mcpgo.WithBoolean("failFast", mcpgo.Description("Stop launching new work after first failure"))),
-		handleRun,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_web",
-			mcpgo.WithDescription("Run an abx-style web action against a web target."),
-			mcpgo.WithString("target", mcpgo.Required()),
-			mcpgo.WithArray("args", mcpgo.Required(),
-				mcpgo.Items(map[string]any{"type": "string"}))),
-		handleWeb,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_gui",
-			mcpgo.WithDescription("Run a guiport-style desktop action against a gui target."),
-			mcpgo.WithString("target", mcpgo.Required()),
-			mcpgo.WithString("kind", mcpgo.Required(),
-				mcpgo.Enum("click", "type", "screenshot", "run")),
-			mcpgo.WithString("selector"),
-			mcpgo.WithString("text"),
-			mcpgo.WithString("path")),
-		handleGUI,
-	)
+	if opts.allows("vmlab_down") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_down",
+				mcpgo.WithDescription("Dispose of a provider instance (idempotent)."),
+				mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
+				mcpgo.WithString("dispose", mcpgo.Description("keep|suspend|poweroff|destroy"))),
+			handleDown,
+		)
+	}
+	if opts.allows("vmlab_with") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_with",
+				mcpgo.WithDescription("Bring an instance up, run a command, restore prior state."),
+				mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Instance name")),
+				mcpgo.WithArray("command", mcpgo.Required(),
+					mcpgo.Items(map[string]any{"type": "string"})),
+				mcpgo.WithString("dispose", mcpgo.Description("Override disposition on success"))),
+			handleWith,
+		)
+	}
+	if opts.allows("vmlab_run") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_run",
+				mcpgo.WithDescription("Run a shell command or YAML flow against a target selector."),
+				mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("Target selector")),
+				mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
+				mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
+				mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent targets")),
+				mcpgo.WithBoolean("failFast", mcpgo.Description("Stop launching new work after first failure"))),
+			handleRun,
+		)
+	}
+	if opts.allows("vmlab_web") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_web",
+				mcpgo.WithDescription("Run an abx-style web action against a web target."),
+				mcpgo.WithString("target", mcpgo.Required()),
+				mcpgo.WithArray("args", mcpgo.Required(),
+					mcpgo.Items(map[string]any{"type": "string"}))),
+			handleWeb,
+		)
+	}
+	if opts.allows("vmlab_gui") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_gui",
+				mcpgo.WithDescription("Run a guiport-style desktop action against a gui target."),
+				mcpgo.WithString("target", mcpgo.Required()),
+				mcpgo.WithString("kind", mcpgo.Required(),
+					mcpgo.Enum("click", "type", "screenshot", "run")),
+				mcpgo.WithString("selector"),
+				mcpgo.WithString("text"),
+				mcpgo.WithString("path")),
+			handleGUI,
+		)
+	}
 }
 
 // ---- handlers ---------------------------------------------------------------
@@ -306,7 +314,7 @@ func handleUp(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolRe
 		return helperError(err.Error()), nil
 	}
 	defer release()
-	tgt, res, err := pr.Up(ctx, inst)
+	tgt, res, err := provider.UpEnforced(ctx, pr, inst)
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
@@ -358,7 +366,7 @@ func handleWith(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallTool
 		return helperError(err.Error()), nil
 	}
 	defer release()
-	tgt, res, err := pr.Up(ctx, inst)
+	tgt, res, err := provider.UpEnforced(ctx, pr, inst)
 	if err != nil {
 		return helperError(err.Error()), nil
 	}

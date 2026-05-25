@@ -25,6 +25,7 @@ func newGrantCmd() *cobra.Command {
 	var (
 		noWait  bool
 		auto    bool
+		dryRun  bool
 		timeout time.Duration
 	)
 	c := &cobra.Command{
@@ -61,6 +62,18 @@ Examples:
 			}
 
 			w := cmd.ErrOrStderr()
+			if dryRun {
+				fmt.Fprintf(w, "[dry-run] would open: %s\n", url)
+				fmt.Fprintf(w, "[dry-run] would prompt user to toggle %q in %s\n", binary, prettyScope(scope))
+				if auto {
+					fmt.Fprintf(w, "[dry-run] would invoke guiport click-text %q to focus the row\n", binary)
+				}
+				if !noWait {
+					fmt.Fprintf(w, "[dry-run] would poll the binary's doctor up to %s\n", timeout)
+				}
+				return nil
+			}
+
 			fmt.Fprintf(w, "Opening System Settings → Privacy & Security → %s\n", prettyScope(scope))
 			fmt.Fprintf(w, "Find '%s' in the list and toggle it ON.\n", binary)
 			fmt.Fprintf(w, "macOS will prompt for Touch ID / admin password — that's the one gesture we can't automate.\n\n")
@@ -115,6 +128,7 @@ Examples:
 	}
 	c.Flags().BoolVar(&noWait, "no-wait", false, "open the pane and exit instead of polling")
 	c.Flags().BoolVar(&auto, "auto", false, "use guiport to scroll to and click the binary's toggle (requires Accessibility already granted to guiport); Touch ID is still the human's job")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "print what would happen without opening System Settings or polling")
 	c.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "max time to wait for the grant")
 	return c
 }

@@ -118,7 +118,7 @@ func runInstance(cmd *cobra.Command, paths config.Paths, name string, rest []str
 	}
 
 	upStart := time.Now()
-	tgt, ensure, upErr := pr.Up(cmd.Context(), inst)
+	tgt, ensure, upErr := provider.UpEnforced(cmd.Context(), pr, inst)
 	upMs := time.Since(upStart).Milliseconds()
 	if run != nil {
 		_ = run.WriteFile("status-before.txt", []byte(ensure.PriorState.String()+"\n"))

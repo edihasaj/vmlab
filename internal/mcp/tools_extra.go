@@ -29,7 +29,7 @@ import (
 // Tools that need the lifecycle wrapper (Up → hooks → run → Down → Notify)
 // shell out to the same vmlab binary instead of duplicating the orchestration
 // logic. Read-only / lightweight tools (usage, orphans, cancel) run inline.
-func registerExtraTools(s *mcpserver.MCPServer, allowWrite bool) {
+func registerExtraTools(s *mcpserver.MCPServer, opts Options) {
 	// Read-only: usage + orphans list.
 	s.AddTool(
 		mcpgo.NewTool("vmlab_usage",
@@ -47,73 +47,82 @@ func registerExtraTools(s *mcpserver.MCPServer, allowWrite bool) {
 		handleOrphansList,
 	)
 
-	if !allowWrite {
-		return
+	if opts.allows("vmlab_fleet_run") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_fleet_run",
+				mcpgo.WithDescription("Run a flow or command across every instance matching @@<tag> in parallel. Full per-instance lifecycle (Up → hooks → run → Down) + aggregate Discord summary if configured. Returns the run id + per-instance exits."),
+				mcpgo.WithString("tag", mcpgo.Required(), mcpgo.Description("Instance tag (the part after @@)")),
+				mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
+				mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
+				mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent instances")),
+				mcpgo.WithBoolean("failFast", mcpgo.Description("Cancel remaining instances on first failure")),
+				mcpgo.WithNumber("retries", mcpgo.Description("Per-instance inner-run retries on failure"))),
+			handleFleetRun,
+		)
 	}
-
-	// Write surface: anything that mutates state or starts a lifecycle.
-	s.AddTool(
-		mcpgo.NewTool("vmlab_fleet_run",
-			mcpgo.WithDescription("Run a flow or command across every instance matching @@<tag> in parallel. Full per-instance lifecycle (Up → hooks → run → Down) + aggregate Discord summary if configured. Returns the run id + per-instance exits."),
-			mcpgo.WithString("tag", mcpgo.Required(), mcpgo.Description("Instance tag (the part after @@)")),
-			mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
-			mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
-			mcpgo.WithNumber("maxParallel", mcpgo.Description("Max concurrent instances")),
-			mcpgo.WithBoolean("failFast", mcpgo.Description("Cancel remaining instances on first failure")),
-			mcpgo.WithNumber("retries", mcpgo.Description("Per-instance inner-run retries on failure"))),
-		handleFleetRun,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_image_build",
-			mcpgo.WithDescription("Bring up @<instance>, run the flow, snapshot it via the provider, then destroy. Future Up calls can start from the named image."),
-			mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Source instance name")),
-			mcpgo.WithString("flowPath", mcpgo.Required(), mcpgo.Description("Flow YAML to run before the snapshot")),
-			mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Image name (used to look up the snapshot later)")),
-			mcpgo.WithString("description", mcpgo.Description("Optional human-readable description")),
-			mcpgo.WithBoolean("keep", mcpgo.Description("Leave source instance running after snapshot"))),
-		handleImageBuild,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_notify_test",
-			mcpgo.WithDescription("Post a synthetic start/success/failure trio to every configured notifier — useful from agents that just edited ~/.vmlab/config.yaml to verify Discord wiring."),
-			mcpgo.WithString("phase", mcpgo.Description("start | success | failure | all (default all)"))),
-		handleNotifyTest,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_cancel",
-			mcpgo.WithDescription("Signal a running run (SIGINT by default) so its cleanup hooks fire."),
-			mcpgo.WithString("runId", mcpgo.Required()),
-			mcpgo.WithString("signal", mcpgo.Description("INT | TERM | KILL (default INT)"))),
-		handleCancel,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_orphans_destroy",
-			mcpgo.WithDescription("Destroy every vmlab-tagged orphan across the requested providers. Cost safety net."),
-			mcpgo.WithArray("providers",
-				mcpgo.Description("Limit to a subset (default: all registered)"),
-				mcpgo.Items(map[string]any{"type": "string"}))),
-		handleOrphansDestroy,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_grant",
-			mcpgo.WithDescription("Open the macOS Privacy & Security pane for a TCC scope and poll until the binary reports the grant is in place. With auto=true, guiport navigates to the row so the human only Touch IDs. Returns a `needsHumanTouchID: true` field so the agent can surface a one-line prompt to the user."),
-			mcpgo.WithString("binary", mcpgo.Required(), mcpgo.Description("Binary to grant — usually 'guiport' or 'um'")),
-			mcpgo.WithString("scope", mcpgo.Description("screen-recording | accessibility | input-monitoring | full-disk-access | automation | camera | microphone (default: screen-recording)")),
-			mcpgo.WithBoolean("auto", mcpgo.Description("Drive the pane via guiport (requires Accessibility already granted to guiport)")),
-			mcpgo.WithString("timeout", mcpgo.Description("Max wait for the grant to land (Go duration, default 5m)")),
-			mcpgo.WithBoolean("noWait", mcpgo.Description("Just open the pane and return — don't poll"))),
-		handleGrant,
-	)
-	s.AddTool(
-		mcpgo.NewTool("vmlab_matrix_run",
-			mcpgo.WithDescription("Run a flow or command against any vmlab selector and return one compact ND-JSON row per target/instance. Failing rows include a 40-line stderr tail. This is the agent-friendly path: ~50× fewer tokens than vmlab_fleet_run for the same scenario."),
-			mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("@<inst> | @@<tag> | <target> | all")),
-			mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
-			mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
-			mcpgo.WithString("fromSnapshot", mcpgo.Description("Restore named snapshot before Up (only for @<inst> / @@<tag>)")),
-			mcpgo.WithNumber("retries", mcpgo.Description("Per-target inner-run retries on failure"))),
-		handleMatrixRun,
-	)
+	if opts.allows("vmlab_image_build") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_image_build",
+				mcpgo.WithDescription("Bring up @<instance>, run the flow, snapshot it via the provider, then destroy. Future Up calls can start from the named image."),
+				mcpgo.WithString("instance", mcpgo.Required(), mcpgo.Description("Source instance name")),
+				mcpgo.WithString("flowPath", mcpgo.Required(), mcpgo.Description("Flow YAML to run before the snapshot")),
+				mcpgo.WithString("name", mcpgo.Required(), mcpgo.Description("Image name (used to look up the snapshot later)")),
+				mcpgo.WithString("description", mcpgo.Description("Optional human-readable description")),
+				mcpgo.WithBoolean("keep", mcpgo.Description("Leave source instance running after snapshot"))),
+			handleImageBuild,
+		)
+	}
+	if opts.allows("vmlab_notify_test") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_notify_test",
+				mcpgo.WithDescription("Post a synthetic start/success/failure trio to every configured notifier — useful from agents that just edited ~/.vmlab/config.yaml to verify Discord wiring."),
+				mcpgo.WithString("phase", mcpgo.Description("start | success | failure | all (default all)"))),
+			handleNotifyTest,
+		)
+	}
+	if opts.allows("vmlab_cancel") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_cancel",
+				mcpgo.WithDescription("Signal a running run (SIGINT by default) so its cleanup hooks fire."),
+				mcpgo.WithString("runId", mcpgo.Required()),
+				mcpgo.WithString("signal", mcpgo.Description("INT | TERM | KILL (default INT)"))),
+			handleCancel,
+		)
+	}
+	if opts.allows("vmlab_orphans_destroy") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_orphans_destroy",
+				mcpgo.WithDescription("Destroy every vmlab-tagged orphan across the requested providers. Cost safety net."),
+				mcpgo.WithArray("providers",
+					mcpgo.Description("Limit to a subset (default: all registered)"),
+					mcpgo.Items(map[string]any{"type": "string"}))),
+			handleOrphansDestroy,
+		)
+	}
+	if opts.allows("vmlab_grant") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_grant",
+				mcpgo.WithDescription("Open the macOS Privacy & Security pane for a TCC scope and poll until the binary reports the grant is in place. With auto=true, guiport navigates to the row so the human only Touch IDs. Returns a `needsHumanTouchID: true` field so the agent can surface a one-line prompt to the user."),
+				mcpgo.WithString("binary", mcpgo.Required(), mcpgo.Description("Binary to grant — usually 'guiport' or 'um'")),
+				mcpgo.WithString("scope", mcpgo.Description("screen-recording | accessibility | input-monitoring | full-disk-access | automation | camera | microphone (default: screen-recording)")),
+				mcpgo.WithBoolean("auto", mcpgo.Description("Drive the pane via guiport (requires Accessibility already granted to guiport)")),
+				mcpgo.WithString("timeout", mcpgo.Description("Max wait for the grant to land (Go duration, default 5m)")),
+				mcpgo.WithBoolean("noWait", mcpgo.Description("Just open the pane and return — don't poll"))),
+			handleGrant,
+		)
+	}
+	if opts.allows("vmlab_matrix_run") {
+		s.AddTool(
+			mcpgo.NewTool("vmlab_matrix_run",
+				mcpgo.WithDescription("Run a flow or command against any vmlab selector and return one compact ND-JSON row per target/instance. Failing rows include a 40-line stderr tail. This is the agent-friendly path: ~50× fewer tokens than vmlab_fleet_run for the same scenario."),
+				mcpgo.WithString("selector", mcpgo.Required(), mcpgo.Description("@<inst> | @@<tag> | <target> | all")),
+				mcpgo.WithString("flowPath", mcpgo.Description("Path to a flow YAML")),
+				mcpgo.WithString("command", mcpgo.Description("Shell command (mutually exclusive with flowPath)")),
+				mcpgo.WithString("fromSnapshot", mcpgo.Description("Restore named snapshot before Up (only for @<inst> / @@<tag>)")),
+				mcpgo.WithNumber("retries", mcpgo.Description("Per-target inner-run retries on failure"))),
+			handleMatrixRun,
+		)
+	}
 }
 
 // ---- usage ---------------------------------------------------------------

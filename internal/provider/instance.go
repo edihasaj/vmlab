@@ -14,6 +14,7 @@ type Instance struct {
 	Disp     DispositionCfg `yaml:"disposition,omitempty"`
 	Mounts   []Mount        `yaml:"mounts,omitempty"`
 	Hooks    hooks.Config   `yaml:"hooks,omitempty"`
+	Budget   BudgetCfg      `yaml:"budget,omitempty"`
 	Settings map[string]any `yaml:",inline"`
 
 	// SourceFile is set by the loader.
@@ -43,6 +44,27 @@ type ReadyConfig struct {
 // TargetConfig describes the transport-side shape emitted by Up.
 type TargetConfig struct {
 	Transport string `yaml:"transport,omitempty"`
+}
+
+// BudgetCfg sets a soft cost ceiling vmlab refuses to cross when bringing
+// an instance up. Providers that know their per-instance hourly rate (or
+// can be told one via budget.hourlyUSD) compare against the cap before
+// firing the create / start API call. Mostly aimed at cloud providers
+// where a misconfigured instance type or region quietly bills 100× more
+// than the operator intended.
+//
+// Fields:
+//   - HourlyUSD:  cap in USD/hour. Provider Up returns ErrBudgetExceeded
+//     if the resolved per-instance rate is higher than this.
+//   - DailyUSD:   not enforced yet — reserved for the future "sum of
+//     this calendar day's runs" check once we have aggregate accounting.
+//
+// Cost data the provider derives itself (instance type → price table,
+// AWS pricing API, etc.) is consulted first; the operator can override
+// via the same struct's HourlyUSD when the provider has no source.
+type BudgetCfg struct {
+	HourlyUSD float64 `yaml:"hourlyUSD,omitempty"`
+	DailyUSD  float64 `yaml:"dailyUSD,omitempty"`
 }
 
 // DispositionCfg controls what `vmlab with` and the flow-level bookends do

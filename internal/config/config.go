@@ -15,8 +15,13 @@ import (
 type Config struct {
 	// RunsDir defaults to <home>/.vmlab/runs.
 	RunsDir string `yaml:"runsDir,omitempty"`
-	// EvidenceRetentionDays defaults to 30.
+	// EvidenceRetentionDays defaults to 30. Used by `vmlab evidence prune
+	// --auto` as the age cutoff.
 	EvidenceRetentionDays int `yaml:"evidenceRetentionDays,omitempty"`
+	// EvidenceMaxSizeMB caps the total RunsDir footprint (in megabytes).
+	// `vmlab evidence prune --auto` deletes oldest-first until the dir
+	// fits under the cap. 0 = no size cap (age-based only).
+	EvidenceMaxSizeMB int `yaml:"evidenceMaxSizeMB,omitempty"`
 	// DefaultMaxParallel for fan-out (0 = unlimited).
 	DefaultMaxParallel int `yaml:"defaultMaxParallel,omitempty"`
 }
@@ -25,6 +30,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		EvidenceRetentionDays: 30,
+		EvidenceMaxSizeMB:     0,
 		DefaultMaxParallel:    0,
 	}
 }
@@ -110,6 +116,9 @@ func mergeFile(into *Config, path string) error {
 	}
 	if c.EvidenceRetentionDays != 0 {
 		into.EvidenceRetentionDays = c.EvidenceRetentionDays
+	}
+	if c.EvidenceMaxSizeMB != 0 {
+		into.EvidenceMaxSizeMB = c.EvidenceMaxSizeMB
 	}
 	if c.DefaultMaxParallel != 0 {
 		into.DefaultMaxParallel = c.DefaultMaxParallel

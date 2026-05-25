@@ -238,10 +238,21 @@ func evidenceBundleCmd() *cobra.Command {
 }
 
 func evidencePruneCmd() *cobra.Command {
-	var olderThan time.Duration
+	var (
+		olderThan time.Duration
+		auto      bool
+	)
 	c := &cobra.Command{
 		Use:   "prune",
 		Short: "Delete runs older than --older-than (default uses config retention)",
+		Long: `Prune evidence runs.
+
+  --older-than DUR     delete anything older than DUR
+  --auto               apply both config knobs:
+                         evidenceRetentionDays   (age cutoff)
+                         evidenceMaxSizeMB       (size ceiling; oldest-first)
+
+Without flags, prunes by age using config's evidenceRetentionDays.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, _, err := config.Load()
 			if err != nil {
@@ -254,14 +265,27 @@ func evidencePruneCmd() *cobra.Command {
 			if d <= 0 {
 				return fmt.Errorf("retention must be > 0")
 			}
-			n, err := evidence.PruneOlderThan(cfg.RunsDir, time.Now().Add(-d))
+			out := cmd.OutOrStdout()
+			byAge, err := evidence.PruneOlderThan(cfg.RunsDir, time.Now().Add(-d))
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "removed %d run(s)\n", n)
+			bySize := 0
+			if auto && cfg.EvidenceMaxSizeMB > 0 {
+				bySize, err = evidence.PruneToFitSize(cfg.RunsDir, int64(cfg.EvidenceMaxSizeMB)*1024*1024)
+				if err != nil {
+					return err
+				}
+			}
+			if auto {
+				fmt.Fprintf(out, "removed %d run(s) by age, %d run(s) by size\n", byAge, bySize)
+			} else {
+				fmt.Fprintf(out, "removed %d run(s)\n", byAge)
+			}
 			return nil
 		},
 	}
 	c.Flags().DurationVar(&olderThan, "older-than", 0, "duration (e.g. 168h); default = retention from config")
+	c.Flags().BoolVar(&auto, "auto", false, "apply both evidenceRetentionDays + evidenceMaxSizeMB from config")
 	return c
 }

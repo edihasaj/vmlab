@@ -312,7 +312,7 @@ func runOneFleetMember(ctx context.Context, cmd *cobra.Command, paths config.Pat
 	}
 
 	upStart := time.Now()
-	tgt, ensure, upErr := pr.Up(ctx, inst)
+	tgt, ensure, upErr := provider.UpEnforced(ctx, pr, inst)
 	r.UpMs = time.Since(upStart).Milliseconds()
 	if upErr != nil {
 		r.Error = upErr.Error()

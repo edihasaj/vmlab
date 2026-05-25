@@ -53,9 +53,10 @@ func newDoctorCmd() *cobra.Command {
 				}
 			}
 
-			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
-			defer cancel()
-
+			// Per-target context so one slow probe can't bleed time from the
+			// rest of the fleet. The flag remains the per-target budget
+			// (renamed in --help); the overall wall-clock is bounded by the
+			// caller's context (cmd.Context()).
 			rows := make([]doctorRow, len(ts))
 			var wg sync.WaitGroup
 			for i, t := range ts {
@@ -63,12 +64,14 @@ func newDoctorCmd() *cobra.Command {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
+					tCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
+					defer cancel()
 					tr, err := reg.Get(t.Transport)
 					if err != nil {
 						rows[i] = doctorRow{Name: t.Name, Transport: t.Transport, OK: false, Message: err.Error()}
 						return
 					}
-					h := tr.Doctor(ctx, t)
+					h := tr.Doctor(tCtx, t)
 					rows[i] = doctorRow{Name: t.Name, Transport: t.Transport, OK: h.OK, Message: h.Message}
 				}()
 			}
@@ -100,6 +103,6 @@ func newDoctorCmd() *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
-	c.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "doctor timeout (shared across all targets)")
+	c.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "per-target doctor timeout")
 	return c
 }

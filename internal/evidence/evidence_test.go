@@ -79,3 +79,29 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("expected 1 pruned, got %d", n)
 	}
 }
+
+func TestPruneToFitSize(t *testing.T) {
+	dir := t.TempDir()
+	// Make three runs with descending StartedAt so the oldest is the first
+	// to be trimmed. Each one carries a 1KB filler file so total size is
+	// predictable enough to test the size cap.
+	for i, age := range []time.Duration{72 * time.Hour, 48 * time.Hour, 24 * time.Hour} {
+		r, _ := New(dir)
+		_ = r.WriteFile("filler.bin", make([]byte, 4096))
+		_, _ = r.Finish(0)
+		path := filepath.Join(r.Dir, "meta.json")
+		started := time.Now().Add(-age).UTC().Format(time.RFC3339)
+		doctored := []byte(`{"id":"r` + string(rune('0'+i)) + `","startedAt":"` + started + `","targets":[]}`)
+		if err := os.WriteFile(path, doctored, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Cap at ~6KB — should evict the oldest run (24KB ≫ 6KB).
+	n, err := PruneToFitSize(dir, 6*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < 1 {
+		t.Fatalf("expected size prune to evict at least one run, got %d", n)
+	}
+}

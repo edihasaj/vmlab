@@ -46,7 +46,7 @@ you've changed an instance's mounts: block and don't want to bounce the VM.`,
 				return err
 			}
 			// Sync needs the instance running. Up is idempotent.
-			tgt, _, err := pr.Up(cmd.Context(), inst)
+			tgt, _, err := provider.UpEnforced(cmd.Context(), pr, inst)
 			if err != nil {
 				return err
 			}

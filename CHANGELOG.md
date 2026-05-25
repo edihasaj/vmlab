@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (cloud maturity + operational/UX gaps)
+
+- **Cost cap on Up** — every instance accepts a `budget:` block; vmlab's
+  `provider.UpEnforced` wrapper refuses Up when the provider's own
+  hourly rate (via the new optional `Priced` interface) exceeds
+  `budget.hourlyUSD`. Providers that don't know their rate treat the
+  cap as documentation only; providers that do (today: none yet, but
+  the wiring is in place) fail closed before any state-mutating API.
+  Migrated all 8 `pr.Up` callsites in the CLI + MCP to go through
+  `UpEnforced`.
+- **`vmlab provider validate <provider>`** — dry-runs credentials via
+  the provider's cheapest read endpoint. Hetzner implements via
+  `hcloud server-type list -o noheader`. Providers that don't
+  implement the new `Validator` interface report "not implemented"
+  cleanly. Use this before kicking off a long flow against a fresh
+  cloud target.
+- **Snapshot capability matrix** documented in `docs/providers.md`.
+  AWS/Azure/GCP/Tart/Windows providers don't yet implement
+  `Snapshotter`; `vmlab snapshot` already returns a clear
+  "not supported" error in those cases. Tracks toward AMI/managed-
+  image/machine-image support per provider.
+- **Per-target doctor timeout** — `vmlab doctor` now uses one
+  `context.WithTimeout` per target instead of a shared ctx. One slow
+  probe can no longer kill the rest of the fleet's checks.
+- **Evidence retention auto-prune** — new config knob
+  `evidenceMaxSizeMB`; `vmlab evidence prune --auto` applies both
+  `evidenceRetentionDays` (age cutoff) and the size ceiling
+  (oldest-first eviction until under cap). `PruneToFitSize` exported
+  for callers that want size-only.
+- **Per-tool MCP ACLs** — `vmlab serve --mcp --allow-tools name,name,…`
+  registers only the listed write tools. `--allow-write` remains as
+  the "all writes" shorthand. Read-only tools stay unconditional.
+  Lets an agent get exactly `vmlab_run` without `vmlab_orphans_destroy`.
+- **`vmlab grant --dry-run`** — prints what it would click / poll
+  without opening System Settings. Useful for agent diff/preview
+  before actually triggering the TCC flow on the user's screen.
+
 ### Added (coverage gaps — Linux Wayland/AT-SPI, remote macOS, Windows elevation)
 
 - **Linux Wayland support** via `ydotool` (mouse + click-at) and `wtype`

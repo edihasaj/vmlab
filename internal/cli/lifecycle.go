@@ -34,7 +34,7 @@ func newUpCmd() *cobra.Command {
 				return err
 			}
 			defer lock.Release()
-			tgt, res, err := pr.Up(cmd.Context(), inst)
+			tgt, res, err := provider.UpEnforced(cmd.Context(), pr, inst)
 			out := cmd.OutOrStdout()
 			if asJSON {
 				return json.NewEncoder(out).Encode(map[string]any{
@@ -175,7 +175,7 @@ VM we suspend/dispose it on exit; if it was already running we leave it.`,
 
 			// up
 			upStart := time.Now()
-			tgt, res, upErr := pr.Up(cmd.Context(), instance)
+			tgt, res, upErr := provider.UpEnforced(cmd.Context(), pr, instance)
 			upMs := time.Since(upStart).Milliseconds()
 			if run != nil {
 				_ = run.WriteFile("status-before.txt", []byte(res.PriorState.String()+"\n"))

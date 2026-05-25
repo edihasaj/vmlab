@@ -184,6 +184,24 @@ func (p *Provider) publicIP(ctx context.Context, i provider.Instance) (string, e
 	return sd.PublicNet.IPv4.IP, nil
 }
 
+// Validate is the Provider's read-only credential dry-run. It calls
+// `hcloud server-type list -o noheader` which only requires read scope
+// on the token and returns non-zero on either a missing token or a
+// network/permission error. Surface stderr so the operator sees the
+// authentic hcloud diagnostic.
+func (p *Provider) Validate(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, "hcloud", "server-type", "list", "-o", "noheader")
+	cmd.Env = os.Environ()
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	if err := cmd.Run(); err != nil {
+		out := strings.TrimSpace(buf.String())
+		return fmt.Errorf("hcloud validate: %w (%s)", err, out)
+	}
+	return nil
+}
+
 // run shells out to hcloud, inheriting HCLOUD_TOKEN from env when present and
 // from instance settings otherwise. Combines stdout+stderr.
 func (p *Provider) run(ctx context.Context, i provider.Instance, args ...string) (string, error) {

@@ -136,7 +136,7 @@ func buildImageForInstance(cmd *cobra.Command, paths config.Paths, pr provider.P
 	defer cancel()
 
 	upStart := time.Now()
-	tgt, _, upErr := pr.Up(ctx, inst)
+	tgt, _, upErr := provider.UpEnforced(ctx, pr, inst)
 	upMs := time.Since(upStart).Milliseconds()
 	if upErr != nil {
 		nfy.Finish(upMs, 0, 0, 1, upErr)
