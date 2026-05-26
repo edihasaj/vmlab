@@ -129,6 +129,27 @@ func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction
 		args = []string{"run", a.Path}
 	case "approve":
 		return g.approve(ctx, t, a)
+	// Lifecycle (guiport ≥0.2). `--app` comes from target settings.
+	case "launch":
+		args = append([]string{"lifecycle", "launch"}, app...)
+	case "quit":
+		args = append([]string{"lifecycle", "quit"}, app...)
+	case "kill":
+		args = append([]string{"lifecycle", "kill"}, app...)
+	case "restart":
+		args = append([]string{"lifecycle", "restart"}, app...)
+	// Logs — no --app; expects extras like process/subsystem/category/last.
+	case "logs":
+		args = []string{"logs"}
+	// FS via Finder — flags come from Extra (src/into/path/to).
+	case "fs-create":
+		args = []string{"fs", "create"}
+	case "fs-rename":
+		args = []string{"fs", "rename"}
+	case "fs-trash":
+		args = []string{"fs", "trash"}
+	case "fs-reveal":
+		args = []string{"fs", "reveal"}
 	default:
 		return fmt.Errorf("guiport: unknown action kind %q", a.Kind)
 	}

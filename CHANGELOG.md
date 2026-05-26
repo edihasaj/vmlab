@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (guiport transport — new action kinds)
+
+Pass through the new `guiport` subcommands (≥0.2) so flows can drive
+headless / FileProvider-backed macOS apps without dropping back to
+`shell:` steps. Targets that bind to a `guiport` transport now accept
+these action `kind` values:
+
+- `launch` / `quit` / `kill` / `restart` — wraps
+  `guiport lifecycle <verb> --app <id>`. `--app` is sourced from the
+  target's `guiport.app` setting. Replaces previous flows that mixed
+  `shell: open /Applications/Foo.app` with `shell: osascript -e 'tell
+  application "Foo" to quit'`.
+- `logs` — wraps `guiport logs`. All filter flags
+  (`process`, `subsystem`, `category`, `last`, `limit`) are passed
+  via `extra:` and auto-piped as `--<key> <value>`.
+- `fs-create` / `fs-rename` / `fs-trash` / `fs-reveal` — wraps
+  `guiport fs <verb>`. Writes flow through Finder/AppleScript so
+  FileProvider hooks (`createItem`, `modifyItem`, `deleteItem`) fire
+  the same as a real user action. Raw `rm` / `mv` in `shell:` steps
+  bypassed those hooks and produced orphaned mappings; this closes
+  that gap for cloud-sync E2E flows. Flags (`src`, `into`, `path`,
+  `to`) go via `extra:`.
+
 ### Added (cloud pricing — `Priced` for every cloud)
 
 Every cloud provider now implements `provider.Priced`, so the
