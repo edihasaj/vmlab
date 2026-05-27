@@ -43,6 +43,7 @@ func NewRoot() *cobra.Command {
 		newSyncCmd(),
 		newSnapshotCmd(),
 		newImageCmd(),
+		newCrabboxCmd(),
 		newWaitCmd(),
 		newShellCmd(),
 		newWebCmd(),

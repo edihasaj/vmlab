@@ -191,5 +191,6 @@ var transportSettingsDoc = map[string]map[string]string{
 	"crabbox": {
 		"crabbox.configPath": "path to crabbox config",
 		"crabbox.name":       "named profile in crabbox",
+		"crabbox.provider":   "aws | azure | gcp | hetzner | parallels | proxmox | ssh — set when warming via `vmlab crabbox warmup`",
 	},
 }
