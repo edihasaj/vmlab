@@ -24,10 +24,19 @@ func newCrabboxCmd() *cobra.Command {
 			"All flags and args after the subcommand are passed through verbatim.",
 	}
 	c.AddCommand(
-		crabboxPassCmd("checkpoint", "Create / fork / list provider checkpoints (crabbox checkpoint ...)"),
+		crabboxPassCmd("checkpoint", "Create / fork / list provider checkpoints"),
 		crabboxPassCmd("warmup", "Provision or claim a crabbox lease and wait until ready"),
 		crabboxPassCmd("image", "AWS AMI bake/promote workflow (admin-token gated)"),
 		crabboxPassCmd("pool", "Manage warm lease pools"),
+		crabboxPassCmd("run", "Run a command on a leased crabbox box"),
+		crabboxPassCmd("ssh", "Open an SSH session to a leased box"),
+		crabboxPassCmd("status", "Show lease status"),
+		crabboxPassCmd("inspect", "Inspect lease metadata"),
+		crabboxPassCmd("logs", "Stream lease logs"),
+		crabboxPassCmd("stop", "Stop / release a lease"),
+		crabboxPassCmd("list", "List leases"),
+		crabboxPassCmd("cleanup", "Clean up expired or failed leases"),
+		crabboxPassCmd("doctor", "Crabbox install + auth diagnostics"),
 	)
 	return c
 }

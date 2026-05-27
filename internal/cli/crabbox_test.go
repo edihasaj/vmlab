@@ -25,14 +25,18 @@ func withFakeCrabboxRunner(t *testing.T, runErr error) *[]string {
 
 func TestCrabboxCmdHasExpectedSubcommands(t *testing.T) {
 	c := newCrabboxCmd()
-	want := map[string]bool{"checkpoint": true, "warmup": true, "image": true, "pool": true}
+	want := []string{
+		"checkpoint", "warmup", "image", "pool",
+		"run", "ssh", "status", "inspect", "logs",
+		"stop", "list", "cleanup", "doctor",
+	}
 	got := map[string]bool{}
 	for _, sub := range c.Commands() {
 		got[sub.Name()] = true
 	}
-	for k := range want {
+	for _, k := range want {
 		if !got[k] {
-			t.Errorf("expected `crabbox %s` subcommand, missing", k)
+			t.Errorf("expected `vmlab crabbox %s` subcommand, missing", k)
 		}
 	}
 }
