@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (guiport — Screen Recording via app-bundle routing)
+
+macOS attributes Screen Recording to the *responsible* process, which for a
+CLI launched from a shell is the terminal — not guiport — so a bare `guiport
+screenshot` can't own the grant (and fails outright under a detached
+tmux/agent). vmlab now routes capture through a `guiport.app` bundle, making
+guiport its own responsible process so the SR grant lands on the app and
+persists.
+
+- `Screenshot` and `gui:{kind:screenshot}` run via `open -n -W -a
+  guiport.app --args screenshot --out <abs>` when a bundle is discovered
+  (`/Applications/guiport.app`, `~/Applications/guiport.app`, the
+  `guiport.appBundle` target setting, or `VMLAB_GUIPORT_APP`). Falls back to
+  the direct binary otherwise. Output paths are made absolute (the app's CWD
+  is `/`).
+- `VMLAB_GUIPORT_APP=off|none|0` forces the direct-binary path.
+- `Doctor` is now bundle-aware: a CLI-level Screen Recording miss is healthy
+  when Accessibility is granted and a bundle is present (capture works via the
+  app); it still flags a missing Accessibility grant or a no-bundle SR miss.
+- `scripts/guiport-app.sh` builds + signs a `guiport.app` from the installed
+  binary (auto-detects a codesigning identity). Re-signing with the same
+  identity + bundle id preserves the SR grant.
+
 ### Fixed (crabbox transport — realign to crabbox ≥0.21)
 
 The crabbox transport was written against an older CLI and every method

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,11 +30,23 @@ func (g *guiportTransport) Doctor(ctx context.Context, t target.Target) Health {
 	if !haveBinary(g.bin) {
 		return Health{OK: false, Message: fmt.Sprintf("%s not on PATH", g.bin)}
 	}
-	res, err := runExternal(ctx, g.bin, []string{"doctor"}, io.Discard, io.Discard)
-	if err != nil {
-		return Health{OK: false, Message: err.Error()}
+	out, _ := captureOutput(ctx, g.bin, []string{"doctor"})
+	axOK := !strings.Contains(out, "accessibility: not trusted")
+	srOK := !strings.Contains(out, "screen_recording: not granted")
+	if axOK && srOK {
+		return Health{OK: true, Message: "guiport doctor ok"}
 	}
-	return Health{OK: res.ExitCode == 0, Message: fmt.Sprintf("guiport doctor exit=%d", res.ExitCode)}
+	// `guiport doctor` runs as a CLI, so its Screen Recording probe reflects
+	// the *terminal's* grant, not guiport.app's. When the app bundle is present
+	// capture routes through it (its own SR grant), so a CLI-level SR miss is
+	// not fatal as long as Accessibility is granted.
+	if !srOK && axOK {
+		if app := guiportAppBundle(t); app != "" {
+			return Health{OK: true, Message: "guiport ok (AX granted; screenshots via guiport.app)"}
+		}
+		return Health{OK: false, Message: "guiport: Screen Recording not granted — install guiport.app or grant the terminal (run: vmlab grant guiport screen-recording)"}
+	}
+	return Health{OK: false, Message: "guiport: Accessibility not trusted (run: vmlab grant guiport accessibility)"}
 }
 
 // appFlags returns the per-subcommand flags this target wants applied to
@@ -69,8 +83,37 @@ func (g *guiportTransport) Shell(ctx context.Context, t target.Target) error {
 }
 
 func (g *guiportTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	args := []string{"screenshot", "--out", path}
-	args = append(args, appFlags(t)...)
+	return g.capture(ctx, t, path)
+}
+
+// capture writes a screenshot to path.
+//
+// macOS attributes Screen Recording to the *responsible* process, which for a
+// CLI launched from a shell is the terminal — not guiport. So a bare `guiport
+// screenshot` only works if the launching terminal itself holds the SR grant
+// (fragile, and impossible under a detached tmux/agent). When the guiport.app
+// bundle is installed we route capture through `open`, making guiport its own
+// responsible process so the SR grant lands on guiport.app and persists. The
+// direct-binary path stays as a fallback for hosts without the bundle.
+func (g *guiportTransport) capture(ctx context.Context, t target.Target, path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	extra := appFlags(t)
+	if app := guiportAppBundle(t); app != "" {
+		// -n forces a fresh instance (no stale resident process); -W waits for
+		// it to exit. The app's CWD is `/`, so the output path must be absolute.
+		args := append([]string{"-n", "-W", "-a", app, "--args", "screenshot", "--out", abs}, extra...)
+		if _, err := runExternal(ctx, "open", args, io.Discard, io.Discard); err != nil {
+			return err
+		}
+		if fi, statErr := os.Stat(abs); statErr == nil && fi.Size() > 0 {
+			return nil
+		}
+		return fmt.Errorf("guiport screenshot via %s produced no output — grant Screen Recording to guiport.app (System Settings → Privacy & Security → Screen Recording)", app)
+	}
+	args := append([]string{"screenshot", "--out", abs}, extra...)
 	res, err := runExternal(ctx, g.bin, args, io.Discard, io.Discard)
 	if err != nil {
 		return err
@@ -79,6 +122,37 @@ func (g *guiportTransport) Screenshot(ctx context.Context, t target.Target, path
 		return fmt.Errorf("guiport screenshot exited %d", res.ExitCode)
 	}
 	return nil
+}
+
+// guiportAppBundle returns the path to a guiport.app bundle, or "" if none is
+// installed. Resolution order: the VMLAB_GUIPORT_APP env var (a path, or
+// "off"/"none"/"0" to force the direct-binary path), then the
+// `guiport.appBundle` target setting, then the well-known locations.
+func guiportAppBundle(t target.Target) string {
+	switch v := os.Getenv("VMLAB_GUIPORT_APP"); v {
+	case "off", "none", "0":
+		return ""
+	case "":
+		// fall through to discovery
+	default:
+		if fi, err := os.Stat(v); err == nil && fi.IsDir() {
+			return v
+		}
+	}
+	candidates := []string{
+		t.SettingString("guiport", "appBundle"),
+		"/Applications/guiport.app",
+		filepath.Join(os.Getenv("HOME"), "Applications", "guiport.app"),
+	}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
@@ -104,7 +178,8 @@ func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction
 		}
 		args = []string{"hotkey", chord}
 	case "screenshot":
-		args = append([]string{"screenshot", "--out", a.Path}, app...)
+		// Route through the app bundle when present so the SR grant applies.
+		return g.capture(ctx, t, a.Path)
 	case "observe":
 		args = append([]string{"observe"}, app...)
 	case "tree":

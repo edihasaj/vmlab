@@ -153,6 +153,9 @@ func TestGUIStepDispatchesToGuiport(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	// Exercise the direct-binary path so the stub is hit; app-bundle routing
+	// (open -a guiport.app) is covered by the transport's own tests.
+	t.Setenv("VMLAB_GUIPORT_APP", "off")
 
 	flowPath := filepath.Join(dir, "f.yaml")
 	body := `name: gui-smoke
