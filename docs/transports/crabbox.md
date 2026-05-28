@@ -9,15 +9,27 @@ name: ubuntu-local
 transport: crabbox
 tags: [linux, local, vm]
 crabbox:
-  configPath: ~/.crabbox/ubuntu-local.yaml   # OR
-  name: ubuntu-local                          # OR
-  host: 10.0.0.5                              # inline static
-  user: ubuntu
-  port: 22
+  id: blue-lobster        # lease id OR friendly slug  -> crabbox -id <v>
+  # slug: blue-lobster    # alias for id
+  provider: hetzner       # optional: scope to a provider -> -provider <v>
+  # --- OR pin a static SSH host (implies provider: ssh) ---
+  # staticHost: 10.0.0.5  # aliases: host
+  # staticUser: ubuntu    # aliases: user
+  # staticPort: "22"      # aliases: port
 ```
 
-Exactly one of `configPath`, `name`, or the `host`/`user`/`port` triple should
-be set. Other crabbox-specific tuning lives in the referenced crabbox config.
+crabbox ≥ 0.21 is lease-based and uses single-dash flags that live *after* the
+subcommand. vmlab maps target settings to those flags:
+
+- `id` / `slug` → `-id <v>` (crabbox accepts a lease id or its friendly slug)
+- `provider` → `-provider <v>`
+- `staticHost`/`staticUser`/`staticPort` (or the legacy `host`/`user`/`port`
+  aliases) → `-static-host`/`-static-user`/`-static-port`, defaulting
+  `-provider ssh`.
+
+With no `id`/`slug`, vmlab relies on crabbox's repo-local default lease (the
+box claimed for the current checkout). There is **no** `configPath`/`--config`
+flag — crabbox discovers its config from the working directory.
 
 ## Capabilities
 
@@ -26,13 +38,26 @@ be set. Other crabbox-specific tuning lives in the referenced crabbox config.
 | shell | yes |
 | sync | yes |
 | install | yes |
-| screenshot | no |
+| screenshot | yes |
 | gui | no |
+
+`screenshot` shells to `crabbox screenshot -id <lease> -output <path>` (desktop
+leases). AX/OCR-level GUI driving stays with the `guiport`/`undermouse`
+transports; a `gui: { kind: screenshot }` step is accepted and routed to the
+screenshot path, anything else returns unsupported.
 
 ## Doctor
 
-`crabbox doctor` is invoked with the resolved config/name. Non-zero exit
-surfaces as an unhealthy target.
+When the target names a concrete lease (`id`/`slug`), vmlab runs
+`crabbox status -id <lease> -json` to check that specific lease. Otherwise it
+falls back to `crabbox doctor` (global broker/provider readiness). Non-zero
+exit surfaces as an unhealthy target.
+
+## Sync
+
+crabbox has no standalone `sync` command — `run` rsyncs the working checkout to
+the box on every call. `vmlab sync <crabbox-target>` therefore runs a no-op
+remote command (`crabbox run … -- true`) purely to push the current diff.
 
 ## Provider passthrough
 

@@ -65,7 +65,7 @@ func TestCrabboxRunForwardsArgs(t *testing.T) {
 		Name:      "ubuntu",
 		Transport: "crabbox",
 		Settings: map[string]any{
-			"crabbox": map[string]any{"configPath": "/etc/crabbox.yaml"},
+			"crabbox": map[string]any{"id": "ubuntu-box"},
 		},
 	}
 	var out, errb bytes.Buffer
@@ -77,7 +77,7 @@ func TestCrabboxRunForwardsArgs(t *testing.T) {
 		t.Fatalf("exit=%d", res.ExitCode)
 	}
 	got := readLastArgs(t, args)
-	for _, want := range []string{"--config", "/etc/crabbox.yaml", "run", "--", "uname", "-a"} {
+	for _, want := range []string{"-id", "ubuntu-box", "run", "--", "uname", "-a"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in argv: %s", want, got)
 		}

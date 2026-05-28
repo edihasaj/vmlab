@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (crabbox transport — realign to crabbox ≥0.21)
+
+The crabbox transport was written against an older CLI and every method
+broke against crabbox 0.21: `--name`/`--config` are rejected (crabbox is
+lease-based with single-dash flags placed *after* the subcommand), and
+there is no standalone `sync` subcommand.
+
+- Address leases by `crabbox.id` / `crabbox.slug` → `-id <v>`,
+  `crabbox.provider` → `-provider <v>`, and the static SSH triple
+  `staticHost`/`staticUser`/`staticPort` (legacy `host`/`user`/`port`
+  aliases) → `-static-host`/`-static-user`/`-static-port`, defaulting
+  `-provider ssh`. Dropped the fictional `configPath`/`--config` setting.
+- `Run` emits `run <addr> -- <cmd...>` (flags after the subcommand).
+- `Doctor` runs `status -id <lease> -json` for a named lease, else falls
+  back to `crabbox doctor`.
+- `Sync` runs `run … -- true` to push the working diff, since crabbox
+  rsyncs the checkout on every `run` rather than via a `sync` command.
+- `Shell` captures the command printed by `crabbox ssh` and execs it.
+- Screenshot capability `false → true`, wired to
+  `crabbox screenshot -id <lease> -output <path>`; a `gui:{kind:screenshot}`
+  step routes to the same path.
+- Added `crabbox_transport_test.go` locking the arg construction so the
+  CLI surface can't drift unnoticed again; updated README, the first-run
+  runbook, `docs/transports/crabbox.md`, and the example target.
+
 ### Added (guiport transport — new action kinds)
 
 Pass through the new `guiport` subcommands (≥0.2) so flows can drive

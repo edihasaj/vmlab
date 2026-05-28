@@ -2,8 +2,9 @@ name: ubuntu-local
 transport: crabbox
 tags: [linux, local, vm]
 crabbox:
-  configPath: ~/.crabbox/ubuntu-local.yaml
+  id: ubuntu-local        # crabbox lease id or friendly slug (-> crabbox -id)
 capabilities:
   shell: true
   sync: true
   install: true
+  screenshot: true

@@ -46,7 +46,7 @@ vmlab init
 # 2. add a target — local, crabbox, adb, idb, simctl, maestro, abx, guiport
 vmlab target add --name dev-mac --transport local --tags local,mac
 vmlab target add --name ubuntu-local --transport crabbox --tags linux,vm \
-  --set crabbox.configPath=~/.crabbox/ubuntu-local.yaml
+  --set crabbox.id=ubuntu-local
 
 # 3. verify health across every transport
 vmlab doctor

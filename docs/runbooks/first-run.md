@@ -7,7 +7,7 @@ brew install vmlab
 vmlab init
 vmlab target add --name dev-mac --transport local --tags local,mac
 vmlab target add --name ubuntu-local --transport crabbox --tags linux,vm \
-  --set crabbox.configPath=~/.crabbox/ubuntu-local.yaml
+  --set crabbox.id=ubuntu-local
 
 vmlab doctor
 # TARGET                   TRANSPORT  OK  MESSAGE
