@@ -3,6 +3,7 @@
 
 BINARY      ?= vmlab
 PKG         ?= ./...
+PREFIX      ?=
 BIN_DIR     ?= $(shell go env GOPATH)/bin
 SMOKE_HOST  ?= edis-mac-studio
 SMOKE_VM    ?= Windows 11
@@ -18,9 +19,15 @@ build: ## Compile the binary into ./bin/$(BINARY).
 	@mkdir -p bin
 	go build -o bin/$(BINARY) ./cmd/$(BINARY)
 
-install: ## go install into $GOPATH/bin.
+install: ## Install the binary. With PREFIX set -> $(PREFIX)/bin, else go install into $GOPATH/bin.
+ifeq ($(strip $(PREFIX)),)
 	go install ./cmd/$(BINARY)
 	@echo "installed: $(BIN_DIR)/$(BINARY)"
+else
+	@mkdir -p "$(PREFIX)/bin"
+	go build -o "$(PREFIX)/bin/$(BINARY)" ./cmd/$(BINARY)
+	@echo "installed: $(PREFIX)/bin/$(BINARY)"
+endif
 
 test: ## Run all tests.
 	go test $(PKG)
