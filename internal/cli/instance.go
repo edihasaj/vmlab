@@ -64,7 +64,7 @@ func instanceAddCmd() *cobra.Command {
 		Use:   "add",
 		Short: "Add an instance (writes ~/.vmlab/instances/<name>.yaml)",
 		Example: `  vmlab instance add --name win11-studio --provider parallels --tags windows \
-      --set parallels.host=edis-mac-studio --set parallels.vm='Windows 11' \
+      --set parallels.host=mac-studio.local --set parallels.vm='Windows 11' \
       --set target.transport=parallels-guest --set disposition.on_success=suspend`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" || prov == "" {

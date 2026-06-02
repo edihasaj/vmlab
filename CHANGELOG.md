@@ -443,7 +443,7 @@ against canned CLI output. `docs/providers.md` matrix updated.
   idempotency, snapshot ID lookup, parallels-guest Sync configures the
   shared folder via `--shf-host-add`.
 
-**Live-verified on edis-mac-studio Win11:** mount config persists across
+**Live-verified on mac-studio.local Win11:** mount config persists across
 Up cycles; guest read+write through `\\Mac\smoke`; snapshot save → ls →
 restore → rm; `vmlab wait` returns immediately when tools are up.
 

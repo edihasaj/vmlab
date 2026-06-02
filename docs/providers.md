@@ -64,7 +64,7 @@ provider: parallels
 tags: [windows]
 
 parallels:                  # provider-specific block
-  host: edis-mac-studio
+  host: mac-studio.local
   vm: "Windows 11"
 
 ready:

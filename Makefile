@@ -5,7 +5,7 @@ BINARY      ?= vmlab
 PKG         ?= ./...
 PREFIX      ?=
 BIN_DIR     ?= $(shell go env GOPATH)/bin
-SMOKE_HOST  ?= edis-mac-studio
+SMOKE_HOST  ?= mac-studio.local
 SMOKE_VM    ?= Windows 11
 
 .DEFAULT_GOAL := help

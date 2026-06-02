@@ -10,7 +10,7 @@ name: win11
 transport: parallels-guest
 tags: [windows]
 parallels:
-  host: edis-mac-studio                       # optional; empty = local
+  host: mac-studio.local                       # optional; empty = local
   user: edi                                   # optional ssh user
   port: 22                                    # optional ssh port
   vm: "Windows 11"                            # required

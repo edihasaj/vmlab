@@ -18,7 +18,7 @@ vmlab instance add \
   --name win11-studio \
   --provider parallels \
   --tags windows \
-  --set parallels.host=edis-mac-studio \
+  --set parallels.host=mac-studio.local \
   --set 'parallels.vm=Windows 11' \
   --set target.transport=parallels-guest \
   --set ready.kind=parallels-tools \

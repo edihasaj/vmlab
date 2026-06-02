@@ -61,7 +61,7 @@ func (p *parallelsGuestTransport) Sync(ctx context.Context, t target.Target, src
 	// folder is already mounted, which is a successful end state.
 	//
 	// Remote-host fallback: when parallels.host is set, prlctl runs on a
-	// different Mac, so a laptop-local path like /Users/edi/Projects/recall
+	// different Mac, so a laptop-local path like /Users/you/Projects/app
 	// won't exist there. Stage the source on the remote host first via
 	// rsync, then shf-host-add the staged path. Disabled by setting
 	// parallels.syncStaging: false (caller knows the path is already

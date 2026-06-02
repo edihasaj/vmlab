@@ -10,11 +10,11 @@
 # Usage:
 #   scripts/smoke-parallels.sh [host] [vm-name]
 #
-# Defaults: host=edis-mac-studio  vm=Windows 11
+# Defaults: host=mac-studio.local  vm=Windows 11
 
 set -uo pipefail
 
-HOST="${1:-edis-mac-studio}"
+HOST="${1:-mac-studio.local}"
 VM="${2:-Windows 11}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%S)-parallels-smoke"
 EV_DIR="${HOME}/.vmlab/runs/${RUN_ID}"

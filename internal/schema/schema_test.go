@@ -73,7 +73,7 @@ func TestValidInstance(t *testing.T) {
 name: win11-studio
 provider: parallels
 parallels:
-  host: edis-mac-studio
+  host: mac-studio.local
   vm: "Windows 11"
 ready:
   kind: parallels-tools

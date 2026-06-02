@@ -8,22 +8,22 @@ adb, idb, or Maestro — it composes them so a single command works whether the
 target is a Hetzner Linux VM, a Parallels Windows guest, a Pixel phone, an iOS
 simulator, a Mac mini, or a ChromeOS box.
 
-See [`goal.md`](goal.md) for the why, [`plan.md`](plan.md) for the original
-plan, and [`docs/providers.md`](docs/providers.md) for the lifecycle layer
-that drives Parallels and Hetzner instances.
+See [`docs/architecture.md`](docs/architecture.md) for the design and
+[`docs/providers.md`](docs/providers.md) for the lifecycle layer that drives
+Parallels and Hetzner instances.
 
 ## Install
 
-vmlab ships pre-built binaries for darwin/linux × amd64/arm64. The repo
-is private, so install pulls the release tarball through your local
-`gh` auth:
+Homebrew tap (macOS/Linux):
 
 ```sh
-# one-liner; needs `gh auth login` (and pulls v(latest))
-curl -fsSL https://raw.githubusercontent.com/edihasaj/vmlab/main/scripts/install-private.sh | bash
+brew install edihasaj/tap/vmlab
+```
 
-# install to ~/.local/bin (no sudo)
-PREFIX=$HOME/.local scripts/install-private.sh
+`go install` (Go ≥1.24):
+
+```sh
+go install github.com/edihasaj/vmlab/cmd/vmlab@latest
 ```
 
 Build from source (Go ≥1.24):
@@ -34,8 +34,8 @@ make install                          # → $GOPATH/bin/vmlab
 PREFIX=$HOME/.local make install      # → $HOME/.local/bin/vmlab
 ```
 
-Brew tap (`brew install edihasaj/tap/vmlab`) is gated on the repo
-going public; see the note in `.goreleaser.yaml`.
+Pre-built binaries (darwin/linux × amd64/arm64) ship on every tagged
+release — grab a tarball from [GitHub Releases](https://github.com/edihasaj/vmlab/releases).
 
 ## Quickstart
 

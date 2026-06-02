@@ -1,0 +1,55 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: input
+    id: os
+    attributes:
+      label: OS / arch
+      description: "Output of `uname -sm` (or the Windows build)"
+      placeholder: "Darwin arm64"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: vmlab version / commit
+      description: "Output of `vmlab version` or `git rev-parse HEAD`"
+    validations:
+      required: true
+  - type: input
+    id: transport
+    attributes:
+      label: Transport / provider involved
+      placeholder: "transport: crabbox, provider: hetzner"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "vmlab doctor output"
+      description: "Paste `vmlab doctor --json` (or plain `vmlab doctor`)."
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: "Exact commands you ran. Include the flow/target/instance YAML if applicable."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: "Include any evidence-bundle output if available."
+    validations:
+      required: true

@@ -33,7 +33,7 @@ const (
 //	hooks:
 //	  pre_up:
 //	    - name: prep shared dir
-//	      run: rsync -a ./assets/ studio:/Users/edi/share/
+//	      run: rsync -a ./assets/ build-host:/srv/share/
 //	  post_up:
 //	    - name: install node
 //	      target_exec: ["sudo", "apt-get", "install", "-y", "nodejs"]

@@ -20,7 +20,7 @@ func TestInstanceRoundTrip(t *testing.T) {
 provider: parallels
 tags: [windows]
 parallels:
-  host: edis-mac-studio
+  host: mac-studio.local
   vm: Windows 11
 ready:
   kind: parallels-tools
@@ -49,7 +49,7 @@ disposition:
 	if got.Provider != "parallels" {
 		t.Errorf("provider=%q", got.Provider)
 	}
-	if got.SettingString("parallels", "host") != "edis-mac-studio" {
+	if got.SettingString("parallels", "host") != "mac-studio.local" {
 		t.Errorf("host=%q", got.SettingString("parallels", "host"))
 	}
 	if got.Ready.Kind != "parallels-tools" {
