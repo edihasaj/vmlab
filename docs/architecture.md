@@ -7,23 +7,35 @@
  user ──► cobra cli ├──► config / target / selector
         └────┬─────┘
              ▼
+        ┌──────────┐    ┌──────────────┐
+        │ provider │ ──►│ cloud / virt │  up·down·budget·orphans
+        └────┬─────┘    └──────────────┘  (parallels, tart, hetzner,
+             │  ready Target                 aws, azure, gcp, windows)
+             ▼
         ┌──────────┐
         │  fleet   │  ── prefixed mux ──► stdout/stderr
         └────┬─────┘
              ▼
         ┌──────────┐    ┌──────────────┐
-        │ transport│ ──►│ external CLI │  (crabbox, abx, guiport, adb,
-        └────┬─────┘    └──────────────┘   idb, simctl, maestro, sh)
-             ▼
+        │ transport│ ──►│ external CLI │  (crabbox, ssh, ssh-windows,
+        └────┬─────┘    └──────────────┘   parallels-guest, abx, guiport,
+             ▼                              adb, idb, simctl, maestro)
         ┌──────────┐
         │ evidence │  ── ~/.vmlab/runs/<id>/{meta,target/*}
         └──────────┘
 ```
 
+Providers are optional: a `Target` that points at an already-running host
+skips the provider layer entirely and goes straight to a transport.
+
 ## Concepts
 
 - **Target.** `(name, transport, tags, transport-specific settings)`. YAML files
   layered user → repo. See `internal/target/`.
+- **Provider.** Owns instance *lifecycle* — `Up` scales a VM up and returns a
+  ready `Target`, `Down` scales it back down per its disposition. Optional
+  `Priced`/`Snapshotter` capabilities add budget caps and snapshots. See
+  `internal/provider/` and [`providers.md`](providers.md).
 - **Transport.** Interface in `internal/transport/transport.go`. Adapters shell
   to external CLIs; no SDK reimplementation.
 - **Selector.** Tag-aware expression resolved against a `Registry`. Operators:

@@ -8,9 +8,14 @@ adb, idb, or Maestro — it composes them so a single command works whether the
 target is a Hetzner Linux VM, a Parallels Windows guest, a Pixel phone, an iOS
 simulator, a Mac mini, or a ChromeOS box.
 
+It provisions the machines too. `vmlab up` **scales an instance up** on
+Parallels, Hetzner, AWS, Azure, GCP, or Tart; you run the verify loop on it;
+`vmlab down` **scales it back down** (suspend / poweroff / destroy) — with
+per-instance budget caps and an `orphans` sweep so nothing is left billing.
+
 See [`docs/architecture.md`](docs/architecture.md) for the design and
-[`docs/providers.md`](docs/providers.md) for the lifecycle layer that drives
-Parallels and Hetzner instances.
+[`docs/providers.md`](docs/providers.md) for the lifecycle layer that scales
+Parallels and cloud instances up and down.
 
 ## Install
 
@@ -119,8 +124,11 @@ Multiple top-level args are union: `vmlab doctor a @mobile`.
 |---|---|
 | `local` | Run on the dev machine itself. Useful for testing flows. |
 | `crabbox` | Shells out to `crabbox` for SSH-reachable hosts (Linux/Windows/macOS VMs). |
+| `ssh` | Direct SSH to Linux hosts (with optional `ssh.display` for X11/Xvfb desktop UI). |
+| `ssh-windows` | Windows over SSH — PowerShell + UIAutomation + SendKeys for input verbs. |
+| `parallels-guest` | Parallels guest (Windows/macOS) — read-mostly verbs via `prlctl`. |
 | `abx` | Headless browser actions. Tagged for `web` capability. |
-| `guiport` | Native macOS/iOS desktop UI driving via Accessibility. |
+| `guiport` | Native macOS desktop UI driving via Accessibility + OCR fallback. |
 | `adb` | Android devices and AVDs. |
 | `idb` | iOS devices via the idb-companion stack. |
 | `simctl` | iOS Simulator via `xcrun simctl`. |
@@ -128,6 +136,46 @@ Multiple top-level args are union: `vmlab doctor a @mobile`.
 
 Adding a new transport = ~200 LOC adapter implementing the `Transport`
 interface. See [`docs/architecture.md`](docs/architecture.md).
+
+## Scale instances up & down
+
+vmlab doesn't just drive targets that already exist — it provisions them. A
+**provider** owns an instance's lifecycle: scale it up, hand back a ready
+target, and scale it down afterwards. So one command can spin a cloud VM up,
+run the verify loop on it, and tear it back down.
+
+```sh
+# one-shot: up → run → restore prior state
+vmlab with gpu-burst -- vmlab run gpu-burst flows/verify.yaml
+
+# or drive the lifecycle by hand
+vmlab up   gpu-burst                      # scale up: create/boot, wait until ready
+vmlab run  gpu-burst flows/verify.yaml
+vmlab down gpu-burst --dispose=destroy    # scale down: keep|suspend|poweroff|destroy
+```
+
+- **Idempotent.** `up` is a no-op when the instance is already ready; `down`
+  honours `only_if_we_started`, so vmlab never suspends a VM you were using.
+- **Budget caps.** Set `budget.hourlyUSD` and vmlab refuses to scale up when
+  the provider quotes a higher rate — a guard against a misconfigured region
+  or instance type.
+- **Orphan sweep.** `vmlab orphans --destroy` cleans up any cloud resource
+  tagged `vmlab=*` that outlived its run.
+- **Snapshots.** Providers that support it expose `vmlab snapshot save/restore`.
+
+| Provider | Backend | Default transport | Scale-down default |
+|---|---|---|---|
+| `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | suspend |
+| `hetzner` | `hcloud` | `ssh` | destroy |
+| `aws` | `aws` CLI | `ssh` | destroy |
+| `azure` | `az` CLI | `ssh` | destroy |
+| `gcp` | `gcloud` | `ssh` | destroy |
+| `tart` | `tart` (Apple silicon) | `ssh` | keep |
+| `windows` | local / Hyper-V | `ssh-windows` | keep |
+
+Instances live in `~/.vmlab/instances/<name>.yaml`. See
+[`docs/providers.md`](docs/providers.md) for the instance schema, host→guest
+mounts, snapshots, and per-provider pricing sources.
 
 ## Flows
 

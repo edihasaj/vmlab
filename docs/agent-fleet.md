@@ -6,32 +6,39 @@ own; vmlab is the connective tissue.
 ## What each one does
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│                       Agent (Claude / Codex / …)                      │
-│                                                                       │
-│         MCP client over stdio  ────────────┐                          │
-└──────────────────────┬─────────────────────┴──────────────────────────┘
-                       │
-                       ▼
-            ┌──────────────────────┐
-            │  vmlab serve --mcp   │   ← cross-OS orchestrator
-            │  vmlab run @<sel>    │     transports + flows + evidence
-            └────┬────────┬────────┘
-                 │        │
-   ┌─────────────┘        └──────────────────────────────────┐
-   │                                                         │
-   ▼                                                         ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  guiport     │  │   abx        │  │  ssh / ...   │
-│ (macOS GUI)  │  │ (web pixels) │  │  (linux/win) │
-└──────┬───────┘  └──────────────┘  └───────┬──────┘
-       │                                    │
-       │  AX + Vision                       │  shell
-       │                                    │
-       ▼                                    ▼
-  Native macOS                        Linux/Windows
-   apps                                 VMs
+Agent (Claude / Codex / …)
+  │  MCP over stdio  ──▶  vmlab serve --mcp
+  ▼
+vmlab  ·  selectors · flows · evidence bundles
+  │
+  ├─▶ PROVIDERS — scale a target up / down
+  │     vmlab up · with · down · orphans · budget caps · snapshots
+  │     ├─ parallels        local Parallels VM (prlctl, local or over SSH)
+  │     ├─ tart             local macOS VM on Apple silicon
+  │     ├─ hetzner          cloud VM (hcloud) — create & destroy
+  │     ├─ aws              cloud VM (EC2)
+  │     ├─ azure            cloud VM (az)
+  │     ├─ gcp              cloud VM (gcloud)
+  │     └─ windows          local Windows / Hyper-V
+  │
+  └─▶ TRANSPORTS — drive whatever is already reachable
+        vmlab run · shell · gui · web · screenshot
+        ├─ local            the dev machine itself
+        ├─ crabbox          linux / windows / macOS VMs over SSH
+        ├─ ssh              linux hosts
+        ├─ ssh-windows      windows (PowerShell + UIAutomation + SendKeys)
+        ├─ parallels-guest  windows / mac guest verbs (read-mostly)
+        ├─ guiport          macOS desktop UI — Accessibility + OCR fallback
+        ├─ abx              web / headless-browser pixels (Playwright)
+        ├─ adb              Android devices + AVDs
+        ├─ idb              iOS devices (idb-companion)
+        ├─ simctl           iOS Simulator (xcrun simctl)
+        └─ maestro          declarative mobile UI flows
 ```
+
+A provider brings an instance up, hands a ready `Target` to the matching
+transport, then scales it back down on the way out — so one `vmlab with`
+can spin a cloud VM up, run the verify loop, and destroy it.
 
 ## Where the seams live
 
