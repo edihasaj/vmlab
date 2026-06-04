@@ -79,6 +79,6 @@ func TestCrabboxCapsAdvertisesScreenshot(t *testing.T) {
 		t.Error("crabbox should advertise Screenshot (crabbox screenshot is supported)")
 	}
 	if caps.GUI {
-		t.Error("crabbox should not advertise GUI driving (guiport/undermouse own that)")
+		t.Error("crabbox should not advertise GUI driving (guiport owns that)")
 	}
 }

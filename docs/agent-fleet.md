@@ -1,6 +1,6 @@
-# The agent fleet — vmlab + guiport + um + recall
+# The agent fleet — vmlab + guiport + recall
 
-Four standalone projects, one composed loop. Each is installable on its
+Three standalone projects, one composed loop. Each is installable on its
 own; vmlab is the connective tissue.
 
 ## What each one does
@@ -21,16 +21,16 @@ own; vmlab is the connective tissue.
    ┌─────────────┘        └──────────────────────────────────┐
    │                                                         │
    ▼                                                         ▼
-┌──────────────┐  ┌────────────────┐  ┌──────────────┐  ┌──────────────┐
-│  guiport     │  │  undermouse    │  │   abx        │  │  ssh / ...   │
-│ (macOS GUI)  │  │ um act/context │  │ (web pixels) │  │  (linux/win) │
-└──────┬───────┘  └────────┬───────┘  └──────────────┘  └───────┬──────┘
-       │                   │                                    │
-       │  AX + Vision      │  LLM + safe action runtime         │  shell
-       │                   │  (delegates clicks to guiport)     │
-       ▼                   ▼                                    ▼
-  Native macOS         Native macOS                       Linux/Windows
-   apps                 apps + LLM                          VMs
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  guiport     │  │   abx        │  │  ssh / ...   │
+│ (macOS GUI)  │  │ (web pixels) │  │  (linux/win) │
+└──────┬───────┘  └──────────────┘  └───────┬──────┘
+       │                                    │
+       │  AX + Vision                       │  shell
+       │                                    │
+       ▼                                    ▼
+  Native macOS                        Linux/Windows
+   apps                                 VMs
 ```
 
 ## Where the seams live
@@ -42,7 +42,6 @@ own; vmlab is the connective tissue.
 | Desktop UI (Windows, incl. Electron) | PowerShell + UIAutomation + SendKeys | `transport: ssh-windows` (input verbs) or `parallels-guest` (read-only verbs) |
 | Mobile (Android) | adb | `transport: adb` |
 | Mobile (iOS sim) | simctl / idb / maestro | `transport: simctl|idb|maestro` |
-| LLM context + safe action plans | undermouse (`um` CLI) | `transport: undermouse` |
 | Headless browser / web pixels | abx (Playwright) | `transport: abx` |
 | Linux/Windows shell | ssh / crabbox / parallels-guest | `transport: ssh|crabbox|parallels-guest` |
 | Coding agent memory | recall | not a transport — installed *on* targets and verified by `examples/flows/recall-cross-os.yaml` |
@@ -65,15 +64,6 @@ vmlab run recall-web examples/flows/recall-web-screenshot.yaml
 ```
 → abx (Playwright Chromium) captures pixels; the macOS Screen Recording
 grant is never asked for. See [`examples/flows/recall-web-screenshot.yaml`](../examples/flows/recall-web-screenshot.yaml).
-
-**Drive UnderMouse's safe action runtime from a flow**
-```sh
-vmlab run mac-local-um examples/flows/um-smoke.yaml
-```
-→ `um context` captures AX + frontmost app, `um ask` streams an LLM reply
-into evidence, `gui:click` round-trips through `um act --plan`. The
-underlying click is still guiport — UnderMouse just wraps it with a
-confirmation gate.
 
 **Grant TCC once, agentically (when you need pixel-level capture on macOS)**
 ```sh

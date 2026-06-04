@@ -25,7 +25,7 @@ func (c *crabboxTransport) Name() string { return "crabbox" }
 
 func (c *crabboxTransport) Capabilities() Caps {
 	// Screenshot is supported via `crabbox screenshot` on desktop leases.
-	// GUI (AX/OCR driving) stays with guiport/undermouse.
+	// GUI (AX/OCR driving) stays with guiport.
 	return Caps{Shell: true, Sync: true, Install: true, Screenshot: true, GUI: false}
 }
 
@@ -96,11 +96,11 @@ func (c *crabboxTransport) Screenshot(ctx context.Context, t target.Target, path
 }
 
 func (c *crabboxTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
-	// crabbox can grab a frame; AX/OCR driving belongs to guiport/undermouse.
+	// crabbox can grab a frame; AX/OCR driving belongs to guiport.
 	if a.Kind == "screenshot" {
 		return c.Screenshot(ctx, t, a.Path)
 	}
-	return fmt.Errorf("crabbox: gui %q not supported (use a guiport/undermouse target)", a.Kind)
+	return fmt.Errorf("crabbox: gui %q not supported (use a guiport target)", a.Kind)
 }
 
 // crabboxRunArgs builds `run <addr> -- <cmd...>`. Addressing flags must follow

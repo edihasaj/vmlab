@@ -42,7 +42,7 @@ flag — crabbox discovers its config from the working directory.
 | gui | no |
 
 `screenshot` shells to `crabbox screenshot -id <lease> -output <path>` (desktop
-leases). AX/OCR-level GUI driving stays with the `guiport`/`undermouse`
+leases). AX/OCR-level GUI driving stays with the `guiport`
 transports; a `gui: { kind: screenshot }` step is accepted and routed to the
 screenshot path, anything else returns unsupported.
 

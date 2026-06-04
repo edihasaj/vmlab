@@ -7,8 +7,18 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
+
+// captureOutput runs <bin args...> and returns combined stdout+stderr as a
+// string. Callers that only need to peek at a command's output (e.g. Doctor
+// reading a JSON liveness blob) use this instead of splitting streams.
+func captureOutput(ctx context.Context, bin string, args []string) (string, error) {
+	var buf strings.Builder
+	_, err := runExternal(ctx, bin, args, &buf, &buf)
+	return buf.String(), err
+}
 
 // runExternal runs an external command and writes its output to stdout/stderr.
 // It returns a Result with exit code & duration. If the command fails to start

@@ -105,7 +105,6 @@ func Default() *Registry {
 	r.Register(NewCrabbox())
 	r.Register(NewABX())
 	r.Register(NewGuiport())
-	r.Register(NewUnderMouse())
 	r.Register(NewADB())
 	r.Register(NewIDB())
 	r.Register(NewSimctl())

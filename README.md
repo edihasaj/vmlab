@@ -213,7 +213,7 @@ Wire up Claude Code:
 
 ## The agent fleet
 
-vmlab is one corner of a four-project agent fleet. Each ships standalone;
+vmlab is one corner of a three-project agent fleet. Each ships standalone;
 vmlab composes them when you point a target or instance at one. Full
 diagram in [`docs/agent-fleet.md`](docs/agent-fleet.md).
 
@@ -221,7 +221,6 @@ diagram in [`docs/agent-fleet.md`](docs/agent-fleet.md).
 |---|---|
 | [**vmlab**](https://github.com/edihasaj/vmlab) | Cross-OS orchestrator. Transports + flows + evidence bundles. You are here. |
 | [**guiport**](https://github.com/edihasaj/guiport) | Local macOS desktop driver. AX + OCR fallback. Standalone CLI/MCP; vmlab's `guiport` transport drives it. |
-| [**undermouse**](https://github.com/edihasaj/undermouse) | macOS LLM companion + headless `um` CLI. vmlab's `undermouse` transport drives `um` (which itself uses guiport). |
 | [**recall**](https://github.com/edihasaj/recall) | Local repo-memory compiler for coding agents. vmlab verifies it cross-OS via `examples/flows/recall-cross-os.yaml`. |
 
 ## License

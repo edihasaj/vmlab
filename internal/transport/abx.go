@@ -65,7 +65,7 @@ func (a *abxTransport) Screenshot(ctx context.Context, t target.Target, path str
 // the TCC-free path for web screenshots and any browser-driven E2E — abx
 // captures pixels from its own Playwright-controlled Chromium, so the
 // macOS Screen Recording grant is irrelevant. For native macOS apps use
-// the guiport (or undermouse) transport instead.
+// the guiport transport instead.
 //
 // Kinds covered:
 //   - screenshot — abx screenshot [path]

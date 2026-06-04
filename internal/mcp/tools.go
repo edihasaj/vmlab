@@ -595,7 +595,7 @@ func inferNeedsGrant(transportName string, err error) []string {
 		return nil
 	}
 	msg := strings.ToLower(err.Error())
-	if transportName != "guiport" && transportName != "undermouse" {
+	if transportName != "guiport" {
 		return nil
 	}
 	var out []string
