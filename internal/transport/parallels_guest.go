@@ -222,11 +222,43 @@ func (p *parallelsGuestTransport) Run(ctx context.Context, t target.Target, cmd 
 	if vm == "" {
 		return Result{}, fmt.Errorf("parallels-guest: parallels.vm is required")
 	}
-	args, err := prlctlArgs(t, append([]string{"exec", vm}, cmd...))
+
+	// Windows guests: `prlctl exec` hands the command to cmd.exe inside the
+	// guest, which re-parses backslashes, pipes, carets and quotes. A bare
+	// argv such as `powershell -Command "a | b"` or a path like `C:\x\y` gets
+	// shredded across the ssh→prlctl→cmd.exe hops (pipes swallowed, `\d`
+	// collapsed to `d`). Deliver via PowerShell -EncodedCommand (UTF-16LE
+	// base64) — the same trick the GUI path already relies on — so nothing
+	// downstream re-parses the payload. See winGuestArgv.
+	guestCmd := cmd
+	if t.OSKind() == "windows" {
+		wrapped, err := winGuestArgv(cmd)
+		if err != nil {
+			return Result{}, err
+		}
+		guestCmd = wrapped
+	}
+
+	args, err := prlctlArgs(t, append([]string{"exec", vm}, guestCmd...))
 	if err != nil {
 		return Result{}, err
 	}
 	return runExternal(ctx, args[0], args[1:], stdout, stderr)
+}
+
+// winGuestArgv wraps a Windows-guest command so it survives the
+// ssh→prlctl→cmd.exe quoting layers. It builds a PowerShell call pipeline
+// (`& 'arg0' 'arg1' …`) that invokes the original argv verbatim, then ships it
+// through -EncodedCommand so neither cmd.exe nor PowerShell re-parses anything.
+// The trailing `exit $LASTEXITCODE` propagates the wrapped command's real exit
+// code back to the caller (so flows / matrix see true pass/fail).
+func winGuestArgv(cmd []string) ([]string, error) {
+	ps, err := powershellInvocation(cmd)
+	if err != nil {
+		return nil, err
+	}
+	enc := encodePowerShell(ps + "; exit $LASTEXITCODE")
+	return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc}, nil
 }
 
 func (p *parallelsGuestTransport) Shell(ctx context.Context, t target.Target) error {

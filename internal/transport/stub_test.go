@@ -841,10 +841,20 @@ func TestParallelsGuestLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
-	for _, want := range []string{"exec", "Windows 11", "cmd.exe", "/c", "ver"} {
+	// Windows guests are delivered via PowerShell -EncodedCommand so the
+	// ssh→prlctl→cmd.exe layers can't shred the payload (eaten pipes, lost
+	// backslashes). The raw argv must NOT leak unencoded; the wrapper tokens
+	// must be present and the payload must decode back to the original argv.
+	for _, want := range []string{"exec", "Windows 11", "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in argv: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "cmd.exe ") {
+		t.Errorf("raw command leaked unencoded (expected EncodedCommand): %s", got)
+	}
+	if payload := encodedPayload(t, got); !strings.Contains(payload, "& 'cmd.exe' '/c' 'ver'") {
+		t.Errorf("decoded payload missing original argv: %q", payload)
 	}
 }
 
@@ -855,6 +865,7 @@ func TestParallelsGuestRemoteQuoting(t *testing.T) {
 
 	tr := NewParallelsGuest()
 	tgt := target.Target{
+		Transport: "parallels-guest",
 		Settings: map[string]any{
 			"parallels": map[string]any{
 				"host": "studio.local",
@@ -870,6 +881,8 @@ func TestParallelsGuestRemoteQuoting(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
+	// The ssh/posix-quoting layer is unchanged: ssh opts, dest and the
+	// space-bearing VM name must still be quoted into the single remote line.
 	for _, want := range []string{
 		"-o ConnectTimeout=8",
 		"-o BatchMode=yes",
@@ -877,13 +890,20 @@ func TestParallelsGuestRemoteQuoting(t *testing.T) {
 		"prlctl exec",
 		`'Windows 11'`,
 		"powershell.exe",
-		"-NoProfile",
-		"-Command",
-		`'Get-Date -Format '\''o'\'''`,
+		"-EncodedCommand",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in argv: %s", want, got)
 		}
+	}
+	// The Windows payload is encoded, so the raw inner command must not appear
+	// on the remote line — and the decoded payload must preserve the original
+	// argv verbatim, including the embedded single quote.
+	if strings.Contains(got, "Get-Date -Format") {
+		t.Errorf("raw command leaked unencoded (expected EncodedCommand): %s", got)
+	}
+	if payload := encodedPayload(t, got); !strings.Contains(payload, "& 'powershell.exe' '-NoProfile' '-Command' 'Get-Date -Format ''o'''") {
+		t.Errorf("decoded payload missing original argv: %q", payload)
 	}
 }
 
