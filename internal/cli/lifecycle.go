@@ -104,6 +104,53 @@ func newDownCmd() *cobra.Command {
 	return c
 }
 
+func newRestartCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "restart <instance>",
+		Short: "Reboot an instance and wait for it to be ready (recovers a wedged guest)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRestart(cmd, args[0], asJSON)
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	return c
+}
+
+// runRestart resolves the instance, asserts the provider can restart, takes the
+// instance lock, then reboots + waits for ready. Shared by the top-level
+// `vmlab restart` and `vmlab instance restart`.
+func runRestart(cmd *cobra.Command, name string, asJSON bool) error {
+	pr, inst, err := resolveInstance(name)
+	if err != nil {
+		return err
+	}
+	rs, ok := pr.(provider.Restarter)
+	if !ok {
+		return fmt.Errorf("provider %q does not support restart", pr.Name())
+	}
+	lock, err := acquireInstanceLock(cmd, inst.Name)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	rErr := rs.Restart(cmd.Context(), inst)
+	out := cmd.OutOrStdout()
+	if asJSON {
+		return json.NewEncoder(out).Encode(map[string]any{
+			"instance": inst.Name,
+			"provider": inst.Provider,
+			"error":    errString(rErr),
+		})
+	}
+	if rErr != nil {
+		return rErr
+	}
+	fmt.Fprintf(out, "restart: %s (provider=%s) — ready\n", inst.Name, inst.Provider)
+	return nil
+}
+
 func newWithCmd() *cobra.Command {
 	var (
 		dispose      string

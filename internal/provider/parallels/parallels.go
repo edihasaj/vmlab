@@ -304,6 +304,11 @@ func (p *Provider) syncLaptopToParallelsHost(ctx context.Context, i provider.Ins
 	return strings.Replace(remoteCache, "~", home, 1), nil
 }
 
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
 func expandHome(path string) string {
 	if len(path) > 1 && path[0] == '~' && (path[1] == '/' || path[1] == filepath.Separator) {
 		if home, err := os.UserHomeDir(); err == nil {
@@ -377,6 +382,31 @@ func (p *Provider) WaitReady(ctx context.Context, i provider.Instance) error {
 	return p.waitReady(ctx, i)
 }
 
+// Restart reboots the guest and waits for Parallels Tools to come back. Use it
+// to recover a VM whose guest agent has wedged (prlctl exec returning
+// PrlResult errors) without a full down/up cycle. Satisfies provider.Restarter.
+func (p *Provider) Restart(ctx context.Context, i provider.Instance) error {
+	vm := i.SettingString("parallels", "vm")
+	if vm == "" {
+		return errors.New("parallels.vm is required")
+	}
+	// Prefer a graceful guest reboot. But a wedged guest agent is exactly when
+	// you reach for restart, and `prlctl restart` (which asks the guest to
+	// reboot itself) then fails with "Operation canceled" — so fall back to a
+	// hard stop+start, which is what actually recovers the box.
+	if _, err := p.runPrlctl(ctx, i, "restart", vm); err != nil {
+		slog.Warn("parallels graceful restart failed; hard-cycling", "vm", vm, "err", err)
+		if _, kerr := p.runPrlctl(ctx, i, "stop", vm, "--kill"); kerr != nil {
+			// Tolerate "already stopped" — a real failure surfaces at start.
+			slog.Warn("parallels stop --kill before start", "vm", vm, "err", kerr)
+		}
+		if _, serr := p.runPrlctl(ctx, i, "start", vm); serr != nil {
+			return fmt.Errorf("parallels restart (hard-cycle start): %w", serr)
+		}
+	}
+	return p.waitReady(ctx, i)
+}
+
 // waitReady polls `prlctl exec <vm> <probe>` until it succeeds or times out.
 // Probe defaults are platform-shaped: cmd.exe for Windows, true for *nix.
 func (p *Provider) waitReady(ctx context.Context, i provider.Instance) error {
@@ -422,9 +452,69 @@ func (p *Provider) waitReady(ctx context.Context, i provider.Instance) error {
 	}
 }
 
-// runPrlctl invokes prlctl with args, locally or via SSH depending on the
-// instance config. Returns combined stdout+stderr for diagnostic parsing.
+// runPrlctl invokes prlctl and, if it fails because the Parallels Service /
+// dispatcher isn't running on the host, launches Parallels Desktop and retries
+// once. That recovery used to be a manual "open Parallels on the host" step.
+// Opt out with parallels.autostart=false.
 func (p *Provider) runPrlctl(ctx context.Context, i provider.Instance, args ...string) (string, error) {
+	out, err := p.runPrlctlOnce(ctx, i, args...)
+	if err == nil || !isServiceDownOutput(out) || i.SettingString("parallels", "autostart") == "false" {
+		return out, err
+	}
+	slog.Warn("parallels service unreachable — launching Parallels Desktop and retrying", "vm", i.SettingString("parallels", "vm"))
+	if serr := p.ensureService(ctx, i); serr != nil {
+		return out, fmt.Errorf("%w; auto-start failed: %v", err, serr)
+	}
+	return p.runPrlctlOnce(ctx, i, args...)
+}
+
+// ensureService launches Parallels Desktop (which starts the background
+// Parallels Service / dispatcher) on the host that owns the VM, then polls
+// until prlctl can reach the service again. The app launch is idempotent.
+func (p *Provider) ensureService(ctx context.Context, i provider.Instance) error {
+	app := i.SettingString("parallels", "app")
+	if app == "" {
+		app = "Parallels Desktop"
+	}
+	host := i.SettingString("parallels", "host")
+	var launch *exec.Cmd
+	if host == "" {
+		launch = exec.CommandContext(ctx, "open", "-ga", app)
+	} else {
+		sshArgs := []string{"-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-o", "RequestTTY=no"}
+		if port := i.SettingString("parallels", "port"); port != "" {
+			sshArgs = append(sshArgs, "-p", port)
+		}
+		dest := host
+		if user := i.SettingString("parallels", "user"); user != "" {
+			dest = user + "@" + host
+		}
+		sshArgs = append(sshArgs, dest, "--", "open", "-ga", posixQuote(app))
+		launch = exec.CommandContext(ctx, "ssh", sshArgs...)
+	}
+	if out, err := launch.CombinedOutput(); err != nil {
+		return fmt.Errorf("launch %q: %v: %s", app, err, strings.TrimSpace(string(out)))
+	}
+	// Poll until the dispatcher accepts commands again.
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		if _, err := p.runPrlctlOnce(ctx, i, "--version"); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("parallels service still unreachable after launching the app")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// runPrlctlOnce invokes prlctl with args, locally or via SSH depending on the
+// instance config. Returns combined stdout+stderr for diagnostic parsing.
+func (p *Provider) runPrlctlOnce(ctx context.Context, i provider.Instance, args ...string) (string, error) {
 	host := i.SettingString("parallels", "host")
 	prlPath := i.SettingString("parallels", "prlctlPath")
 	if prlPath == "" {
@@ -435,6 +525,14 @@ func (p *Provider) runPrlctl(ctx context.Context, i provider.Instance, args ...s
 		bin := "prlctl"
 		if alt := i.SettingString("parallels", "bin"); alt != "" {
 			bin = alt
+		}
+		// Local mode runs bare `prlctl`, which a non-login shell (ssh, cron,
+		// agent runtime) may not have on PATH. Fall back to the standard
+		// app-bundle location so callers don't need a login shell.
+		if _, err := exec.LookPath(bin); err != nil {
+			if cand := filepath.Join(prlPath, bin); fileExists(cand) {
+				bin = cand
+			}
 		}
 		cmd = exec.CommandContext(ctx, bin, args...)
 	} else {
@@ -519,6 +617,18 @@ func parseStatus(out string) provider.State {
 func isNotFoundOutput(s string) bool {
 	s = strings.ToLower(s)
 	return strings.Contains(s, "not found") || strings.Contains(s, "no such vm") || strings.Contains(s, "invalid usage")
+}
+
+// isServiceDownOutput detects the failure prlctl prints when Parallels Desktop
+// (and thus the Parallels Service / dispatcher) isn't running on the host:
+//
+//	Login failed: Unable to connect to Parallels Service. Please restart your
+//	Mac and try launching Parallels Desktop again.
+func isServiceDownOutput(s string) bool {
+	s = strings.ToLower(s)
+	return strings.Contains(s, "connect to parallels service") ||
+		strings.Contains(s, "parallels service is not running") ||
+		strings.Contains(s, "failed to connect to the dispatcher")
 }
 
 // posixQuote wraps s in single quotes for a POSIX shell, escaping embedded

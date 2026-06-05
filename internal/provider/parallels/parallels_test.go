@@ -320,3 +320,141 @@ esac`)
 		t.Errorf("unexpected err: %v", err)
 	}
 }
+
+// stubOpen writes a fake `open` onto PATH that touches a marker so a paired
+// prlctl stub can flip from "service down" to "service up" once it has run.
+func stubOpen(t *testing.T, dir, marker string) {
+	t.Helper()
+	script := fmt.Sprintf("#!/bin/sh\ntouch %q\nexit 0\n", marker)
+	if err := os.WriteFile(filepath.Join(dir, "open"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write open stub: %v", err)
+	}
+}
+
+func TestParallelsRestart(t *testing.T) {
+	dir := t.TempDir()
+	args := stubPrlctl(t, dir, `case "$1" in
+restart) exit 0 ;;
+exec) exit 0 ;;
+esac`)
+	withPath(t, dir)
+
+	inst := provider.Instance{
+		Settings: map[string]any{"parallels": map[string]any{"vm": "Windows 11"}},
+		Ready:    provider.ReadyConfig{Timeout: "5s"},
+	}
+	if err := New().Restart(context.Background(), inst); err != nil {
+		t.Fatalf("restart: %v", err)
+	}
+	data, _ := os.ReadFile(args)
+	if !strings.Contains(string(data), "restart Windows 11") {
+		t.Errorf("expected `restart Windows 11` in args, got: %s", data)
+	}
+}
+
+// When `prlctl restart` fails (graceful reboot canceled by a wedged guest),
+// Restart must hard-cycle: stop --kill then start, then wait for ready.
+func TestParallelsRestartFallsBackToHardCycle(t *testing.T) {
+	dir := t.TempDir()
+	args := stubPrlctl(t, dir, `case "$1" in
+restart) echo 'Failed to restart the VM: Operation canceled.' >&2; exit 255 ;;
+stop) exit 0 ;;
+start) exit 0 ;;
+exec) exit 0 ;;
+esac`)
+	withPath(t, dir)
+
+	inst := provider.Instance{
+		Settings: map[string]any{"parallels": map[string]any{"vm": "Windows 11"}},
+		Ready:    provider.ReadyConfig{Timeout: "5s"},
+	}
+	if err := New().Restart(context.Background(), inst); err != nil {
+		t.Fatalf("restart fallback: %v", err)
+	}
+	got := string(mustRead(t, args))
+	for _, want := range []string{"stop Windows 11 --kill", "start Windows 11"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in args, got: %s", want, got)
+		}
+	}
+}
+
+// Local mode should find prlctl at parallels.prlctlPath even when it isn't on
+// PATH (non-login shell), so callers don't need `zsh -lc`.
+func TestParallelsLocalFindsPrlctlViaPrlctlPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX shell required")
+	}
+	bundle := t.TempDir() // stands in for the app-bundle MacOS dir; NOT on PATH
+	script := "#!/bin/sh\necho 'VM \"x\" exist running'\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bundle, "prlctl"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write prlctl: %v", err)
+	}
+	t.Setenv("PATH", "/nonexistent-vmlab-test") // ensure bare prlctl is unresolvable
+
+	inst := provider.Instance{Settings: map[string]any{"parallels": map[string]any{
+		"vm": "x", "prlctlPath": bundle,
+	}}}
+	st, err := New().Status(context.Background(), inst)
+	if err != nil {
+		t.Fatalf("status via prlctlPath fallback: %v", err)
+	}
+	if st != provider.StateRunning {
+		t.Errorf("state=%v, want running", st)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return b
+}
+
+// When prlctl reports the Parallels Service is down, runPrlctl should launch
+// the app (our `open` stub flips the marker) and retry, so Status succeeds.
+func TestParallelsAutoStartsServiceOnConnectFailure(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "opened")
+	stubPrlctl(t, dir, `if [ ! -f "`+marker+`" ]; then
+  echo 'Login failed: Unable to connect to Parallels Service.' >&2
+  exit 1
+fi
+case "$1" in
+--version) echo 'prlctl version 19'; exit 0 ;;
+status) echo 'VM "x" exist running'; exit 0 ;;
+esac`)
+	stubOpen(t, dir, marker)
+	withPath(t, dir)
+
+	inst := provider.Instance{Settings: map[string]any{"parallels": map[string]any{"vm": "x"}}}
+	st, err := New().Status(context.Background(), inst)
+	if err != nil {
+		t.Fatalf("status after auto-start: %v", err)
+	}
+	if st != provider.StateRunning {
+		t.Errorf("state=%v, want running", st)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("expected the app to be launched (marker missing): %v", err)
+	}
+}
+
+// autostart=false must keep the old fail-fast behaviour (no app launch).
+func TestParallelsAutoStartOptOut(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "opened")
+	stubPrlctl(t, dir, `echo 'Unable to connect to Parallels Service.' >&2; exit 1`)
+	stubOpen(t, dir, marker)
+	withPath(t, dir)
+
+	inst := provider.Instance{Settings: map[string]any{"parallels": map[string]any{"vm": "x", "autostart": "false"}}}
+	if _, err := New().Status(context.Background(), inst); err == nil {
+		t.Fatal("expected error when autostart is disabled")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("app should NOT be launched when autostart=false")
+	}
+}
