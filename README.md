@@ -77,9 +77,10 @@ vmlab evidence show <run-id>
 | `vmlab screenshot <target> <out-path>` | Capture a screenshot from any transport that supports it. |
 | `vmlab evidence ls/show/bundle/prune` | Inspect or zip per-run evidence directories. |
 | `vmlab provider ls/doctor` | List/health-check registered VM providers. |
-| `vmlab instance add/ls/show/rm/status` | Manage provider instances under `~/.vmlab/instances/`. |
+| `vmlab instance add/ls/show/rm/status/restart` | Manage provider instances under `~/.vmlab/instances/`. |
 | `vmlab up <instance>` | Ensure an instance is running and ready (idempotent). |
 | `vmlab down <instance> [--dispose=…]` | Dispose of an instance — `keep\|suspend\|poweroff\|destroy`. |
+| `vmlab restart <instance>` | Reboot an instance and wait for ready — recovers a wedged guest agent. |
 | `vmlab with <instance> -- <cmd>` | Up → run → restore prior state. Honours `disposition.only_if_we_started`. |
 | `vmlab sync <instance>` | Wire host-to-guest shares (parallels) / rsync (ssh) per the instance's `mounts:`. |
 | `vmlab snapshot save/restore/ls/rm` | Manage instance snapshots (parallels today; Snapshotter is a per-provider opt-in). |

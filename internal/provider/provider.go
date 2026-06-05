@@ -188,6 +188,15 @@ type ReadyWaiter interface {
 	WaitReady(ctx context.Context, i Instance) error
 }
 
+// Restarter is an optional capability for providers that can reboot a running
+// instance in place — and wait for it to come back ready — without a full
+// down/up cycle. Used by `vmlab restart` to recover a guest whose agent has
+// wedged (e.g. Parallels Tools returning PrlResult errors mid-run), which
+// previously meant SSHing to the host and running `prlctl restart` by hand.
+type Restarter interface {
+	Restart(ctx context.Context, i Instance) error
+}
+
 // Snapshotter is an optional capability for providers that can checkpoint and
 // restore VM state (Parallels, Hetzner via images, EC2 via AMIs, …). Callers
 // detect support via a type assertion.

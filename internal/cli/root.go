@@ -39,6 +39,7 @@ func NewRoot() *cobra.Command {
 		newMatrixCmd(),
 		newUpCmd(),
 		newDownCmd(),
+		newRestartCmd(),
 		newWithCmd(),
 		newSyncCmd(),
 		newSnapshotCmd(),

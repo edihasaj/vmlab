@@ -15,7 +15,7 @@ func newInstanceCmd() *cobra.Command {
 		Use:   "instance",
 		Short: "Manage provider instances (e.g. parallels VMs, hetzner servers)",
 	}
-	c.AddCommand(instanceLsCmd(), instanceAddCmd(), instanceRemoveCmd(), instanceShowCmd(), instanceStatusCmd())
+	c.AddCommand(instanceLsCmd(), instanceAddCmd(), instanceRemoveCmd(), instanceShowCmd(), instanceStatusCmd(), instanceRestartCmd())
 	return c
 }
 
@@ -212,6 +212,20 @@ func instanceStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "error: %s\n", msg)
 			}
 			return nil
+		},
+	}
+	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
+	return c
+}
+
+func instanceRestartCmd() *cobra.Command {
+	var asJSON bool
+	c := &cobra.Command{
+		Use:   "restart <name>",
+		Short: "Reboot an instance and wait for it to be ready",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRestart(cmd, args[0], asJSON)
 		},
 	}
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
