@@ -7,21 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-05
+
 ### Added (parallels — restart + service auto-recovery)
 
 Two manual recovery steps that previously meant SSHing to the Parallels host
 are now first-class CLI:
 
 - `vmlab restart <instance>` (and `vmlab instance restart <name>`) reboots the
-  guest via `prlctl restart` and waits for Parallels Tools to come back —
-  recovering a wedged guest agent (e.g. `prlctl exec` returning
-  `PrlResult_GetParamByIndex` mid-run) without a full down/up cycle. Backed by
-  a new optional `provider.Restarter` capability.
+  guest and waits for Parallels Tools to come back — recovering a wedged guest
+  agent (e.g. `prlctl exec` returning `PrlResult_GetParamByIndex` mid-run)
+  without a full down/up cycle. Tries a graceful `prlctl restart` first, then
+  falls back to a hard `stop --kill` + `start` (the graceful reboot is canceled
+  by exactly the wedged guest you're recovering). Backed by a new optional
+  `provider.Restarter` capability.
 - When `prlctl` fails because the **Parallels Service / dispatcher isn't
   running** ("Unable to connect to Parallels Service"), the provider now
   launches Parallels Desktop (`open -ga "Parallels Desktop"`, over SSH when
   `parallels.host` is set) and retries once, instead of erroring out. Opt out
   with `parallels.autostart=false`; override the app name with `parallels.app`.
+- Local mode resolves `prlctl` at `parallels.prlctlPath` (default app-bundle
+  location) when it isn't on `PATH`, so non-login shells (ssh/cron/agent) work
+  without a login shell.
 
 ### Added (guiport — Screen Recording via app-bundle routing)
 
