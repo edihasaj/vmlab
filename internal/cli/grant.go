@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -222,6 +224,9 @@ func scopeVerifier(scope, binary string) (func(ctx context.Context) bool, string
 	}
 	switch binary {
 	case "guiport":
+		if scope == "screen-recording" {
+			return guiportScreenRecordingVerifier(), "guiport.app screenshot"
+		}
 		// guiport doctor emits a line per scope with ✓/✗. Grep for the
 		// scope we asked about; trusted = green.
 		needle := "screen_recording: trusted"
@@ -258,4 +263,46 @@ func scopeVerifier(scope, binary string) (func(ctx context.Context) bool, string
 		}, "um doctor"
 	}
 	return nil, ""
+}
+
+func guiportScreenRecordingVerifier() func(ctx context.Context) bool {
+	return func(ctx context.Context) bool {
+		app := firstExistingDir(
+			os.Getenv("VMLAB_GUIPORT_APP"),
+			"/Applications/guiport.app",
+			filepath.Join(os.Getenv("HOME"), "Applications", "guiport.app"),
+		)
+		if app == "" {
+			out, _ := exec.CommandContext(ctx, "guiport", "doctor").CombinedOutput()
+			return strings.Contains(string(out), "screen_recording: trusted")
+		}
+		f, err := os.CreateTemp("", "vmlab-guiport-sr-*.png")
+		if err != nil {
+			return false
+		}
+		path := f.Name()
+		_ = f.Close()
+		_ = os.Remove(path)
+		defer os.Remove(path)
+
+		cmd := exec.CommandContext(ctx, "open", "-n", "-W", "-gj", "-a", app, "--args", "screenshot", "--out", path)
+		if err := cmd.Run(); err != nil {
+			return false
+		}
+		info, err := os.Stat(path)
+		return err == nil && info.Size() > 0
+	}
+}
+
+func firstExistingDir(paths ...string) string {
+	for _, path := range paths {
+		switch path {
+		case "", "off", "none", "0":
+			continue
+		}
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			return path
+		}
+	}
+	return ""
 }
