@@ -46,6 +46,7 @@ func TestPrefixWriterContinuationAfterTrailingNewline(t *testing.T) {
 func TestInstanceClassShortcutMatchesTaggedInstances(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	instancesDir := filepath.Join(home, ".vmlab", "instances")
 	if err := os.MkdirAll(instancesDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -104,6 +105,7 @@ parallels: { vm: "Windows 11" }
 func TestInstanceClassShortcutRejectsNonClass(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	_, paths, _ := config.Load()
 	cases := []string{"@linux", "linux", "@@", "@@linux,smoke", ""}
 	for _, c := range cases {

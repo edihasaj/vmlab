@@ -254,6 +254,26 @@ func TestABXLiveMode(t *testing.T) {
 	}
 }
 
+func TestABXRunForwardsBrowserVerbs(t *testing.T) {
+	dir := t.TempDir()
+	args := stubBinary(t, dir, "abx", 0)
+	withPath(t, dir)
+
+	tr := NewABX()
+	tgt := target.Target{}
+	res, err := tr.Run(context.Background(), tgt, []string{"goto", "https://example.com"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit=%d", res.ExitCode)
+	}
+	got := readLastArgs(t, args)
+	if !strings.Contains(got, "goto https://example.com") {
+		t.Errorf("expected abx goto forwarding, got: %s", got)
+	}
+}
+
 func TestGuiportClick(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "guiport", 0)

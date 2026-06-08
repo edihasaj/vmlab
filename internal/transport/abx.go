@@ -40,6 +40,9 @@ func (a *abxTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 	if len(cmd) == 0 {
 		return Result{ExitCode: 0}, nil
 	}
+	if isABXVerb(cmd[0]) {
+		return a.runABX(ctx, t, cmd, stdout, stderr)
+	}
 	return runExternal(ctx, cmd[0], cmd[1:], stdout, stderr)
 }
 
@@ -50,8 +53,7 @@ func (a *abxTransport) Shell(ctx context.Context, t target.Target) error {
 }
 
 func (a *abxTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	args := abxArgs(t, []string{"screenshot", path})
-	res, err := runExternal(ctx, a.bin, args, io.Discard, io.Discard)
+	res, err := a.runABX(ctx, t, []string{"screenshot", path}, io.Discard, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -79,7 +81,6 @@ func (a *abxTransport) Screenshot(ctx context.Context, t target.Target, path str
 //   - open-url   — abx goto <url>
 //   - run        — abx <args from Path> (raw forwarding for advanced cases)
 func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
-	prefix := abxArgs(t, nil) // honours live mode + abx.url defaults
 	var verb []string
 	switch action.Kind {
 	case "screenshot":
@@ -147,8 +148,7 @@ func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIActio
 	default:
 		return fmt.Errorf("abx: unsupported gui kind %q", action.Kind)
 	}
-	args := append(prefix, verb...)
-	res, err := runExternal(ctx, a.bin, args, io.Discard, io.Discard)
+	res, err := a.runABX(ctx, t, verb, io.Discard, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -158,11 +158,15 @@ func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIActio
 	return nil
 }
 
+func (a *abxTransport) runABX(ctx context.Context, t target.Target, args []string, stdout, stderr io.Writer) (Result, error) {
+	return runExternalEnv(ctx, a.bin, abxArgs(t, args), []string{"BROWSE_PARENT_PID=0"}, stdout, stderr)
+}
+
 // abxArgs assembles the per-invocation prefix for an abx call. `abx.mode:
-// live` wraps every command as `abx live <verb>` to drive the user's real
-// Chrome via CDP (needs the chrome-debug helper). The persistent abx
-// server keeps URL state across calls, so we don't pass --url here —
-// emit a goto step first or use the per-action URL fields.
+// live` wraps every command as `abx live <verb>` to drive a CDP Chrome target.
+// Prefer the dedicated chrome-agent profile over the user's personal Chrome.
+// The persistent abx server keeps URL state across calls, so we don't pass
+// --url here — emit a goto step first or use the per-action URL fields.
 func abxArgs(t target.Target, extra []string) []string {
 	var args []string
 	if mode := t.SettingString("abx", "mode"); mode == "live" {
@@ -170,4 +174,23 @@ func abxArgs(t target.Target, extra []string) []string {
 	}
 	args = append(args, extra...)
 	return args
+}
+
+func isABXVerb(verb string) bool {
+	switch verb {
+	case "goto", "back", "forward", "reload", "url",
+		"text", "html", "links", "forms", "accessibility",
+		"click", "fill", "select", "hover", "type", "press", "scroll", "wait", "viewport", "upload",
+		"cookie-import", "cookie-import-browser",
+		"js", "eval", "css", "attrs", "console", "network", "dialog", "cookies", "storage", "perf", "is",
+		"screenshot", "pdf", "responsive",
+		"snapshot", "diff",
+		"live", "chain",
+		"tabs", "tab", "newtab", "closetab",
+		"status", "cookie", "header", "useragent", "stop", "restart",
+		"dialog-accept", "dialog-dismiss":
+		return true
+	default:
+		return false
+	}
 }

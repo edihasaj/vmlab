@@ -8,7 +8,6 @@ capabilities:
 abx:
   # Point at any web URL. Default is recall's marketing site; swap to
   # http://localhost:<port> after `recall webui start` to screenshot the
-  # local dashboard, or set abx.mode=live to drive your real Chrome via
-  # CDP (needs `~/Projects/agent-scripts/browser/scripts/chrome-debug`
-  # once for the CDP port).
+  # local dashboard, or set abx.mode=live to drive a dedicated Chrome
+  # profile after `~/Projects/agent-scripts/browser/scripts/chrome-agent start`.
   url: https://recallmemory.dev/

@@ -255,10 +255,13 @@ Wire up Claude Code:
 
 ## Configuration
 
-- `~/.vmlab/config.yaml` — user-level defaults.
+- `$VMLAB_HOME/config.yaml` — user-level defaults when `VMLAB_HOME` is set.
+- `~/.vmlab/config.yaml` — user-level defaults otherwise.
 - `<repo>/.vmlab.yaml` — repo overrides.
-- `~/.vmlab/targets/*.yaml` — user targets; repo `.vmlab/targets/*.yaml` shadow them.
-- `~/.vmlab/runs/<run-id>/` — evidence bundles (kept 30 days by default).
+- `$VMLAB_HOME/targets/*.yaml` or `~/.vmlab/targets/*.yaml` — user targets;
+  repo `.vmlab/targets/*.yaml` shadow them.
+- `$VMLAB_HOME/runs/<run-id>/` or `~/.vmlab/runs/<run-id>/` — evidence
+  bundles (kept 30 days by default).
 
 ## The agent fleet
 

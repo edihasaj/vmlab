@@ -1,4 +1,5 @@
-// Package config loads vmlab configuration from ~/.vmlab and per-repo .vmlab.yaml.
+// Package config loads vmlab configuration from VMLAB_HOME (or ~/.vmlab) and
+// per-repo .vmlab.yaml.
 package config
 
 import (
@@ -36,14 +37,15 @@ func DefaultConfig() Config {
 }
 
 // Paths returns the resolved config and target directories, merged in
-// precedence order: built-in defaults < user (~/.vmlab) < repo (.vmlab/).
+// precedence order: built-in defaults < user (VMLAB_HOME or ~/.vmlab) < repo
+// (.vmlab/).
 type Paths struct {
-	UserDir     string // ~/.vmlab
-	UserFile    string // ~/.vmlab/config.yaml
+	UserDir     string // VMLAB_HOME or ~/.vmlab
+	UserFile    string // <UserDir>/config.yaml
 	RepoDir     string // <cwd>/.vmlab
 	RepoFile    string // <cwd>/.vmlab.yaml or <cwd>/.vmlab/config.yaml
 	RunsDir     string
-	StateDir    string   // ~/.vmlab/state — file locks, ephemeral bookkeeping
+	StateDir    string   // <UserDir>/state — file locks, ephemeral bookkeeping
 	TargetDir   []string // ordered: user first, repo overrides
 	InstanceDir []string // ordered: user first, repo overrides
 }
@@ -58,7 +60,12 @@ func ResolvePaths() (Paths, error) {
 	if err != nil {
 		return Paths{}, fmt.Errorf("cwd: %w", err)
 	}
-	userDir := filepath.Join(home, ".vmlab")
+	userDir := os.Getenv("VMLAB_HOME")
+	if userDir == "" {
+		userDir = filepath.Join(home, ".vmlab")
+	} else {
+		userDir = expand(userDir)
+	}
 	repoDir := filepath.Join(cwd, ".vmlab")
 	p := Paths{
 		UserDir:  userDir,

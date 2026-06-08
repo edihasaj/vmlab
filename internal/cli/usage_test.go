@@ -42,6 +42,7 @@ func writeRun(t *testing.T, root, id, provider, instance string, exit int, upMs,
 func TestUsageAggregatesByInstance(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	writeRun(t, runsDir, "r1", "hetzner", "linux-a", 0, 1000, 5000, 200, 0)
 	writeRun(t, runsDir, "r2", "hetzner", "linux-a", 1, 1000, 200, 100, 0)
@@ -76,6 +77,7 @@ func TestUsageAggregatesByInstance(t *testing.T) {
 func TestUsageGroupByProvider(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	writeRun(t, runsDir, "r1", "hetzner", "linux-a", 0, 1000, 5000, 200, 0)
 	writeRun(t, runsDir, "r2", "hetzner", "linux-b", 0, 500, 100, 50, 0)
@@ -103,6 +105,7 @@ func TestUsageGroupByProvider(t *testing.T) {
 func TestUsageSinceFilter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	writeRun(t, runsDir, "old", "hetzner", "linux-a", 0, 1000, 5000, 200, 48*time.Hour)
 	writeRun(t, runsDir, "new", "hetzner", "linux-a", 0, 500, 100, 50, time.Minute)
@@ -124,6 +127,7 @@ func TestUsageSinceFilter(t *testing.T) {
 func TestUsageNoLifecycleEntriesIsBenign(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	cmd := newUsageCmd()
 	cmd.SetArgs([]string{})
 	var out bytes.Buffer

@@ -16,6 +16,7 @@ import (
 func TestRunningLockRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 
 	run, err := evidence.New(filepath.Join(home, ".vmlab", "runs"))
 	if err != nil {
@@ -76,6 +77,7 @@ func TestLogTailReadsAppendedBytes(t *testing.T) {
 func TestAttachExitsWhenLockRemoved(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 
 	run, err := evidence.New(filepath.Join(home, ".vmlab", "runs"))
 	if err != nil {

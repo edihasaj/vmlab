@@ -174,6 +174,7 @@ func setupParallelsHome(t *testing.T, stubBody string) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	instDir := filepath.Join(home, ".vmlab", "instances")
 	if err := os.MkdirAll(instDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -310,6 +311,7 @@ func TestMCPWithRequiresCommand(t *testing.T) {
 func TestRunStatusReadsRunningLock(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	// Lay down a fake run.
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
@@ -346,6 +348,7 @@ func TestRunStatusReadsRunningLock(t *testing.T) {
 func TestLogStreamTailsNewBytes(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	if err := os.MkdirAll(runsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -459,6 +462,7 @@ func TestInferNeedsGrant(t *testing.T) {
 
 func TestToolsCallTargetsEmpty(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("VMLAB_HOME", "")
 	c := startServer(t, false)
 	c.initialize(t)
 	resp := c.call(t, "tools/call", map[string]any{
@@ -483,6 +487,7 @@ func TestToolsCallTargetsEmpty(t *testing.T) {
 func TestMCPUsageAggregatesEvidence(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("VMLAB_HOME", "")
 
 	runsDir := filepath.Join(home, ".vmlab", "runs")
 	writeMCPRun(t, runsDir, "r1", "hetzner", "linux-a", 0, 1000, 5000, 200)
@@ -502,6 +507,7 @@ func TestMCPUsageAggregatesEvidence(t *testing.T) {
 
 func TestMCPCancelMissingRunFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("VMLAB_HOME", "")
 	c := startServer(t, true)
 	c.initialize(t)
 	resp := c.call(t, "tools/call", map[string]any{
@@ -519,6 +525,7 @@ func TestMCPCancelMissingRunFails(t *testing.T) {
 
 func TestMCPCancelRequiresRunId(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("VMLAB_HOME", "")
 	c := startServer(t, true)
 	c.initialize(t)
 	resp := c.call(t, "tools/call", map[string]any{

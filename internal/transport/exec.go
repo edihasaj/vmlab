@@ -24,6 +24,10 @@ func captureOutput(ctx context.Context, bin string, args []string) (string, erro
 // It returns a Result with exit code & duration. If the command fails to start
 // (e.g. binary missing), it returns an error.
 func runExternal(ctx context.Context, name string, args []string, stdout, stderr io.Writer) (Result, error) {
+	return runExternalEnv(ctx, name, args, nil, stdout, stderr)
+}
+
+func runExternalEnv(ctx context.Context, name string, args []string, env []string, stdout, stderr io.Writer) (Result, error) {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -32,6 +36,9 @@ func runExternal(ctx context.Context, name string, args []string, stdout, stderr
 	}
 	start := time.Now()
 	c := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
 	c.Stdout = stdout
 	c.Stderr = stderr
 	err := c.Run()
