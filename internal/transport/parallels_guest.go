@@ -614,10 +614,16 @@ func prlctlArgs(t target.Target, prlArgs []string) ([]string, error) {
 		prlPath = "/Applications/Parallels Desktop.app/Contents/MacOS"
 	}
 	if host == "" {
-		// Local: rely on PATH but allow override via prlctl.bin setting.
+		// Local: rely on PATH but allow fallback to the standard app-bundle
+		// location for non-login agent shells.
 		bin := "prlctl"
 		if alt := t.SettingString("parallels", "bin"); alt != "" {
 			bin = alt
+		}
+		if !haveBinary(bin) {
+			if cand := filepath.Join(prlPath, bin); fileReadable(cand) {
+				bin = cand
+			}
 		}
 		return append([]string{bin}, prlArgs...), nil
 	}
@@ -639,6 +645,11 @@ func prlctlArgs(t target.Target, prlArgs []string) ([]string, error) {
 	}
 	remote := fmt.Sprintf("PATH=\"$PATH:%s\" prlctl %s", prlPath, strings.Join(quoted, " "))
 	return append(sshArgs, remote), nil
+}
+
+func fileReadable(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 // posixQuote wraps s in single quotes for a POSIX shell, escaping any embedded

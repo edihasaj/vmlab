@@ -788,6 +788,35 @@ func TestParallelsGuestLocal(t *testing.T) {
 	}
 }
 
+func TestParallelsGuestLocalFallsBackToPrlctlPath(t *testing.T) {
+	dir := t.TempDir()
+	bundle := filepath.Join(dir, "Parallels Desktop.app", "Contents", "MacOS")
+	if err := os.MkdirAll(bundle, 0o755); err != nil {
+		t.Fatalf("mkdir bundle: %v", err)
+	}
+	args := stubBinary(t, bundle, "prlctl", 0)
+	t.Setenv("PATH", filepath.Join(dir, "empty"))
+
+	tr := NewParallelsGuest()
+	tgt := target.Target{
+		Name:      "win11",
+		Transport: "parallels-guest",
+		Settings: map[string]any{
+			"parallels": map[string]any{
+				"vm":         "Windows 11",
+				"prlctlPath": bundle,
+			},
+		},
+	}
+	_, err := tr.Run(context.Background(), tgt, []string{"cmd.exe", "/c", "ver"}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readLastArgs(t, args); !strings.Contains(got, "exec Windows 11") {
+		t.Errorf("expected app-bundle prlctl fallback, got: %s", got)
+	}
+}
+
 func TestParallelsGuestRemoteQuoting(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "ssh", 0)
