@@ -48,10 +48,10 @@ screenshot path, anything else returns unsupported.
 
 ## Doctor
 
-When the target names a concrete lease (`id`/`slug`), vmlab runs
-`crabbox status -id <lease> -json` to check that specific lease. Otherwise it
-falls back to `crabbox doctor` (global broker/provider readiness). Non-zero
-exit surfaces as an unhealthy target.
+When the target names a concrete address (`id`/`slug` or `staticHost`), vmlab
+runs `crabbox status ... -json` to check that destination. Otherwise it falls
+back to `crabbox doctor` (global broker/provider readiness). Non-zero exit
+surfaces as an unhealthy target.
 
 ## Sync
 

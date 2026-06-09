@@ -70,6 +70,9 @@ func TestCrabboxHasLeaseAddr(t *testing.T) {
 	if !hasLeaseAddr(crabboxTarget(map[string]any{"id": "x1"})) {
 		t.Error("id target should count as a lease addr")
 	}
+	if !hasLeaseAddr(crabboxTarget(map[string]any{"staticHost": "ubuntu"})) {
+		t.Error("static host target should count as a concrete addr")
+	}
 }
 
 func TestCrabboxCapsAdvertisesScreenshot(t *testing.T) {

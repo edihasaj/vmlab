@@ -114,7 +114,9 @@ func crabboxRunArgs(t target.Target, cmd []string) []string {
 // hasLeaseAddr reports whether the target names a concrete lease (id/slug) as
 // opposed to relying on crabbox's repo-local default.
 func hasLeaseAddr(t target.Target) bool {
-	return t.SettingString("crabbox", "id") != "" || t.SettingString("crabbox", "slug") != ""
+	return t.SettingString("crabbox", "id") != "" ||
+		t.SettingString("crabbox", "slug") != "" ||
+		firstNonEmpty(t.SettingString("crabbox", "staticHost"), t.SettingString("crabbox", "host")) != ""
 }
 
 // crabboxAddr translates target settings into crabbox addressing flags.

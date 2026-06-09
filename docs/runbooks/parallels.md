@@ -27,6 +27,33 @@ vmlab instance add \
   --set disposition.only_if_we_started=true
 ```
 
+## Bootstrap a Linux guest
+
+For Ubuntu/Linux VMs, use the setup helper instead of hand-editing SSH,
+authorized keys, shared folders, and smoke targets:
+
+```bash
+vmlab instance setup-linux \
+  --vm "Ubuntu 24.04.3 ARM64" \
+  --host 10.211.55.7 \
+  --prefix ubuntu \
+  --share farm=$HOME/Projects/farm
+```
+
+What it does:
+
+- creates or reuses `~/.ssh/vmlab_<prefix>`;
+- installs `openssh-server`, `avahi-daemon`, `curl`, `git`, `jq`, and build tools;
+- appends the public key to the guest user's `authorized_keys`;
+- creates `/work/crabbox` by default;
+- adds Parallels shared folders;
+- appends a `~/.ssh/config` host alias, after writing a timestamped backup;
+- writes repo-local `vmlab/targets/<prefix>-{ssh,crabbox,parallels}.yaml` and
+  `vmlab/flows/<prefix>-*.yaml`.
+
+If `--host` is omitted, vmlab asks the guest for `hostname -I` through
+`prlctl exec` and picks the first non-loopback IPv4 address.
+
 ## Smoke
 
 ```bash

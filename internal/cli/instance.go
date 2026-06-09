@@ -15,7 +15,7 @@ func newInstanceCmd() *cobra.Command {
 		Use:   "instance",
 		Short: "Manage provider instances (e.g. parallels VMs, hetzner servers)",
 	}
-	c.AddCommand(instanceLsCmd(), instanceAddCmd(), instanceRemoveCmd(), instanceShowCmd(), instanceStatusCmd(), instanceRestartCmd())
+	c.AddCommand(instanceLsCmd(), instanceAddCmd(), instanceSetupLinuxCmd(), instanceRemoveCmd(), instanceShowCmd(), instanceStatusCmd(), instanceRestartCmd())
 	return c
 }
 

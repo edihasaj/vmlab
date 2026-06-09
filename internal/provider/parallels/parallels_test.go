@@ -321,6 +321,46 @@ esac`)
 	}
 }
 
+func TestWaitReadyLinuxUsesTrueProbe(t *testing.T) {
+	dir := t.TempDir()
+	args := stubPrlctl(t, dir, `case "$1" in
+status) echo 'VM "x" exist running'; exit 0 ;;
+exec) exit 0 ;;
+esac`)
+	withPath(t, dir)
+
+	inst := provider.Instance{
+		Settings: map[string]any{
+			"os":        "linux",
+			"parallels": map[string]any{"vm": "x"},
+		},
+		Ready: provider.ReadyConfig{Timeout: "5s"},
+	}
+	if _, _, err := New().Up(context.Background(), inst); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	got := string(mustRead(t, args))
+	if !strings.Contains(got, "exec x /bin/true") {
+		t.Fatalf("expected linux ready probe, got: %s", got)
+	}
+}
+
+func TestBuildTargetPropagatesOS(t *testing.T) {
+	tgt := buildTarget(provider.Instance{
+		Name: "ubuntu",
+		Settings: map[string]any{
+			"os":        "linux",
+			"parallels": map[string]any{"vm": "Ubuntu"},
+		},
+	})
+	if tgt.SettingString("os") != "linux" {
+		t.Fatalf("os=%q, want linux", tgt.SettingString("os"))
+	}
+	if tgt.OSKind() != "linux" {
+		t.Fatalf("OSKind=%q, want linux", tgt.OSKind())
+	}
+}
+
 // stubOpen writes a fake `open` onto PATH that touches a marker so a paired
 // prlctl stub can flip from "service down" to "service up" once it has run.
 func stubOpen(t *testing.T, dir, marker string) {

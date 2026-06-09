@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-09
+
+### Added
+
+- `vmlab instance setup-linux` bootstraps a fresh Parallels Ubuntu/Linux VM
+  into a vmlab-ready target: SSH key, guest `authorized_keys`, baseline Linux
+  tooling, SSH/avahi services, Parallels shared folders, crabbox work root,
+  repo-local smoke targets, and smoke flows.
+
+### Fixed
+
+- Parallels Linux instances now default readiness probes to `/bin/true` and
+  keep `os: linux` on emitted targets, instead of inheriting the Windows
+  `cmd.exe /c ver` path.
+- crabbox static-host targets now count as concrete addresses during `doctor`,
+  so they avoid unrelated global cloud-provider checks.
+
 ## [0.2.0] - 2026-06-05
 
 ### Added (parallels — restart + service auto-recovery)

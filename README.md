@@ -178,6 +178,25 @@ Instances live in `~/.vmlab/instances/<name>.yaml`. See
 [`docs/providers.md`](docs/providers.md) for the instance schema, host→guest
 mounts, snapshots, and per-provider pricing sources.
 
+### Bootstrap a Parallels Linux VM
+
+For a freshly created Ubuntu VM in Parallels, make it vmlab/crabbox-ready from
+the host:
+
+```sh
+vmlab instance setup-linux \
+  --vm "Ubuntu 24.04.3 ARM64" \
+  --host 10.211.55.7 \
+  --prefix ubuntu \
+  --share farm=$HOME/Projects/farm
+```
+
+The command creates or reuses `~/.ssh/vmlab_<prefix>`, adds the public key to
+the guest, enables SSH + avahi, installs baseline Linux tooling, creates a
+writable crabbox work root, configures Parallels shared folders, appends an
+SSH host alias with a timestamped backup, and writes repo-local smoke targets
+under `vmlab/targets/` plus flows under `vmlab/flows/`.
+
 ## Flows
 
 Intentionally minimal — push complexity into your shell scripts.

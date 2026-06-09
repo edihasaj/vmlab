@@ -417,6 +417,9 @@ func (p *Provider) waitReady(ctx context.Context, i provider.Instance) error {
 		}
 	}
 	probe := []string{"cmd.exe", "/c", "ver"}
+	if strings.EqualFold(i.SettingString("os"), "linux") || strings.EqualFold(i.SettingString("os"), "darwin") {
+		probe = []string{"/bin/true"}
+	}
 	if alt := i.SettingString("parallels", "readyProbe"); alt != "" {
 		probe = strings.Fields(alt)
 	}
@@ -586,6 +589,9 @@ func buildTarget(i provider.Instance) target.Target {
 	}
 	if port := i.SettingString("parallels", "port"); port != "" {
 		settings["parallels"].(map[string]any)["port"] = port
+	}
+	if osKind := i.SettingString("os"); osKind != "" {
+		settings["os"] = osKind
 	}
 	return target.Target{
 		Name:      i.Name,
