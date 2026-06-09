@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/config"
+	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/target"
 	"github.com/edihasaj/vmlab/internal/transport"
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ type doctorRow struct {
 	Transport string `json:"transport"`
 	OK        bool   `json:"ok"`
 	Message   string `json:"message"`
+	Hint      string `json:"hint,omitempty"`
 }
 
 type doctorReport struct {
@@ -77,6 +79,21 @@ func newDoctorCmd() *cobra.Command {
 			}
 			wg.Wait()
 
+			// An unreachable target often just means its backing VM is
+			// suspended. Point at the instance that can revive it so an
+			// agent runs `vmlab up` instead of falling back to manual
+			// ssh/prlctl spelunking.
+			if insts, ierr := provider.LoadInstances(p); ierr == nil {
+				for i := range rows {
+					if rows[i].OK {
+						continue
+					}
+					if name := recoveryInstance(ts[i], insts.All()); name != "" {
+						rows[i].Hint = fmt.Sprintf("try: vmlab up %s", name)
+					}
+				}
+			}
+
 			rep := doctorReport{Targets: rows, OK: true}
 			for _, r := range rows {
 				if !r.OK {
@@ -94,7 +111,11 @@ func newDoctorCmd() *cobra.Command {
 				if r.OK {
 					ok = "yes"
 				}
-				fmt.Fprintf(out, "%-24s %-10s %-3s %s\n", r.Name, r.Transport, ok, r.Message)
+				msg := r.Message
+				if r.Hint != "" {
+					msg += " — " + r.Hint
+				}
+				fmt.Fprintf(out, "%-24s %-10s %-3s %s\n", r.Name, r.Transport, ok, msg)
 			}
 			if !rep.OK {
 				return fmt.Errorf("doctor: one or more targets unhealthy")
@@ -105,4 +126,37 @@ func newDoctorCmd() *cobra.Command {
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	c.Flags().DurationVar(&timeout, "timeout", 20*time.Second, "per-target doctor timeout")
 	return c
+}
+
+// recoveryInstance returns the name of an instance that plausibly backs the
+// given target: an explicit `instance:` setting on the target wins, then an
+// exact name match, then a tag overlap — but only when exactly one instance
+// overlaps, since generic tags like `parallels` span unrelated VMs. Machine-
+// local transports (local, abx, guiport) never need a VM brought up.
+func recoveryInstance(t target.Target, insts []provider.Instance) string {
+	switch t.Transport {
+	case "local", "abx", "guiport":
+		return ""
+	}
+	if name := t.SettingString("instance"); name != "" {
+		return name
+	}
+	for _, in := range insts {
+		if in.Name == t.Name {
+			return in.Name
+		}
+	}
+	var overlapping []string
+	for _, in := range insts {
+		for _, tag := range in.Tags {
+			if t.HasTag(tag) {
+				overlapping = append(overlapping, in.Name)
+				break
+			}
+		}
+	}
+	if len(overlapping) == 1 {
+		return overlapping[0]
+	}
+	return ""
 }

@@ -361,6 +361,34 @@ func TestBuildTargetPropagatesOS(t *testing.T) {
 	}
 }
 
+func TestBuildTargetForwardsSSHSettings(t *testing.T) {
+	// An instance declaring `target: {transport: ssh}` must emit a target
+	// the ssh transport can actually dial — host/user/identity come from
+	// the instance's inline ssh block.
+	tgt := buildTarget(provider.Instance{
+		Name:   "ubuntu",
+		Target: provider.TargetConfig{Transport: "ssh"},
+		Settings: map[string]any{
+			"os":        "linux",
+			"parallels": map[string]any{"vm": "Ubuntu"},
+			"ssh": map[string]any{
+				"host":     "vmlab-ubuntu",
+				"user":     "parallels",
+				"identity": "~/.ssh/vmlab_ubuntu",
+			},
+		},
+	})
+	if tgt.Transport != "ssh" {
+		t.Fatalf("transport=%q, want ssh", tgt.Transport)
+	}
+	if got := tgt.SettingString("ssh", "host"); got != "vmlab-ubuntu" {
+		t.Fatalf("ssh.host=%q, want vmlab-ubuntu", got)
+	}
+	if got := tgt.SettingString("ssh", "identity"); got != "~/.ssh/vmlab_ubuntu" {
+		t.Fatalf("ssh.identity=%q, want forwarded", got)
+	}
+}
+
 // stubOpen writes a fake `open` onto PATH that touches a marker so a paired
 // prlctl stub can flip from "service down" to "service up" once it has run.
 func stubOpen(t *testing.T, dir, marker string) {

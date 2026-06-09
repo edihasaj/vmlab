@@ -80,6 +80,36 @@ disposition:
   only_if_we_started: true  # never suspend a VM the user was already using
 ```
 
+### Non-default target transports
+
+`target.transport: ssh` (or `crabbox`) makes `Up()` emit a target driven over
+SSH instead of `prlctl exec` — add the matching settings block inline and it
+is forwarded onto the emitted target verbatim:
+
+```yaml
+name: ubuntu
+provider: parallels
+os: linux
+target:
+  transport: ssh
+parallels:
+  vm: "Ubuntu 24.04.3 ARM64"
+  readyProbe: systemctl is-active ssh   # gate ready on sshd, not just Tools
+ssh:
+  host: vmlab-ubuntu
+  user: parallels
+  identity: ~/.ssh/vmlab_parallels_ubuntu
+```
+
+### Doctor recovery hints
+
+Standalone targets can backlink to the instance that provisions them with a
+top-level `instance: <name>` key. When `vmlab doctor` finds the target
+unreachable it appends `try: vmlab up <name>` (also in `--json` as `hint`),
+so an agent's next step is one command, not ssh archaeology. Without the
+explicit key the hint falls back to an exact name match, then a tag overlap
+when exactly one instance shares a tag.
+
 ### Mounts
 
 `mounts:` declares host-to-guest file shares. Each provider wires them up

@@ -593,6 +593,15 @@ func buildTarget(i provider.Instance) target.Target {
 	if osKind := i.SettingString("os"); osKind != "" {
 		settings["os"] = osKind
 	}
+	// Non-default transports (ssh / crabbox on a Linux guest) read their own
+	// settings block, so forward it verbatim from the instance YAML — without
+	// this an instance declaring `target: {transport: ssh}` emits a target
+	// with no ssh.host and every run fails after a successful Up.
+	for _, key := range []string{"ssh", "crabbox"} {
+		if block, ok := i.Settings[key]; ok {
+			settings[key] = block
+		}
+	}
 	return target.Target{
 		Name:      i.Name,
 		Transport: tt,

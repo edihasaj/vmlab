@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `vmlab web` (and MCP `vmlab_web`) now route every verb straight to abx via
+  the new `transport.WebRunner` interface. Previously a non-abx verb fell
+  back to local exec, so `vmlab web t -- open <url>` silently launched
+  `/usr/bin/open` (exit 0, no output) instead of failing inside abx.
+- `Transport.GUI` now takes stdout/stderr writers. Read-style kinds
+  (`observe`, `tree`, `accessibility`, `snapshot`) used to discard their
+  report (`io.Discard`), making them no-ops for agents; `vmlab gui`, flow
+  `gui:` steps, and MCP `vmlab_gui` (new `output` field) now surface it.
+- Parallels instances declaring `target: {transport: ssh|crabbox}` now
+  forward their inline `ssh:`/`crabbox:` settings onto the emitted target —
+  previously Up succeeded but every subsequent dial failed with no host.
+- Refreshed the abx verb table used for flow `run:` routing (scrape,
+  prettyscreenshot, ux-audit, inspect, state, watch, tab-each, …).
+
+### Added
+
+- `vmlab doctor` appends a recovery hint (`try: vmlab up <instance>`) to
+  unreachable targets that are backed by an instance — resolved from the
+  target's new optional `instance:` setting, an exact name match, or an
+  unambiguous tag overlap. Agents run one command instead of falling back
+  to manual ssh/prlctl spelunking.
+
 ## [0.2.2] - 2026-06-09
 
 ### Added
