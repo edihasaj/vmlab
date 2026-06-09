@@ -328,7 +328,7 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 //   - observe    — focused window/element metadata as JSON
 //   - tree       — top-N child UIA elements of the foreground window
 //   - open-url   — Start-Process <url>
-func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	if a.Kind == "wait" {
 		ms := extraInt(a.Extra, "milliseconds")
 		if ms == 0 {
@@ -359,7 +359,7 @@ func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAct
 	remoteCmd := "powershell -NoProfile -NonInteractive -EncodedCommand " + enc
 	sshArgs := append(dial, remoteCmd)
 	var errb strings.Builder
-	res, err := runExternal(ctx, "ssh", sshArgs, io.Discard, &errb)
+	res, err := runExternal(ctx, "ssh", sshArgs, stdout, &errb)
 	if err != nil {
 		return err
 	}
@@ -422,7 +422,7 @@ func (s *sshWindowsTransport) approve(ctx context.Context, t target.Target, a GU
 // tryClickText invokes the existing click-text GUI path silently. UIA click-
 // text returns non-zero when no button matches, which is the polling signal.
 func (s *sshWindowsTransport) tryClickText(ctx context.Context, t target.Target, label string) bool {
-	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label})
+	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label}, io.Discard, io.Discard)
 	return err == nil
 }
 

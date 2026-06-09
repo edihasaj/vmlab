@@ -34,6 +34,10 @@ vmlab gui calculator --kind run --path flows/calc-smoke.yaml
 Selectors follow guiport's `role[attr=value]` syntax. Prefer `identifier=`
 selectors over `name=` — they survive layout/locale changes.
 
+Read-style kinds print guiport's report on stdout — `--kind observe` shows
+the frontmost app/window/focus, `--kind tree` dumps the AX tree. The MCP
+`vmlab_gui` tool returns the same text in its `output` field.
+
 ## Permissions (Accessibility + Screen Recording)
 
 guiport needs two macOS TCC grants:

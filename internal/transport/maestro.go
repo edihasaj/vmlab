@@ -72,9 +72,9 @@ func (m *maestroTransport) Screenshot(ctx context.Context, t target.Target, path
 	return nil
 }
 
-func (m *maestroTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
+func (m *maestroTransport) GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error {
 	if action.Kind == "run" || action.Kind == "run-flow" {
-		_, err := m.Run(ctx, t, []string{"test", action.Path}, io.Discard, io.Discard)
+		_, err := m.Run(ctx, t, []string{"test", action.Path}, stdout, stderr)
 		return err
 	}
 	return fmt.Errorf("maestro: gui kind %q not implemented", action.Kind)

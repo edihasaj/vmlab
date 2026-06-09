@@ -228,7 +228,7 @@ exit 1
 	err := tr.GUI(context.Background(), tgt, GUIAction{
 		Kind:  "approve",
 		Extra: map[string]any{"allow": []any{"OK", "Allow"}, "timeout": "3s"},
-	})
+	}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}

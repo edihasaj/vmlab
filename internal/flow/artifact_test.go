@@ -41,7 +41,7 @@ func (f *fakeTransport) Shell(context.Context, target.Target) error { return nil
 func (f *fakeTransport) Screenshot(context.Context, target.Target, string) error {
 	return nil
 }
-func (f *fakeTransport) GUI(context.Context, target.Target, transport.GUIAction) error {
+func (f *fakeTransport) GUI(context.Context, target.Target, transport.GUIAction, io.Writer, io.Writer) error {
 	return nil
 }
 

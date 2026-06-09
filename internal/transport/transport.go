@@ -44,7 +44,18 @@ type Transport interface {
 	Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error)
 	Shell(ctx context.Context, t target.Target) error
 	Screenshot(ctx context.Context, t target.Target, path string) error
-	GUI(ctx context.Context, t target.Target, action GUIAction) error
+	// GUI dispatches a structured desktop/web UI action. Read-style kinds
+	// (observe, tree, accessibility, snapshot) write their report to stdout —
+	// agents depend on seeing it, so implementations must not discard it.
+	GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error
+}
+
+// WebRunner is implemented by transports that route argv straight to their
+// web driver (abx). Explicit web actions (`vmlab web`, MCP vmlab_web) must
+// use it instead of Run — Run keeps a local-exec fallback for flow `run:`
+// steps, which would silently execute a same-named local binary on a typo.
+type WebRunner interface {
+	RunWeb(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error)
 }
 
 // Registry maps transport name -> implementation.

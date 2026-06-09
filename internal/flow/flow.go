@@ -299,7 +299,7 @@ func Run(ctx context.Context, tr transport.Transport, t target.Target, f *Flow, 
 			slog.Debug("flow step", "target", t.Name, "index", i, "kind", label, "selector", action.Selector, "path", action.Path)
 			fmt.Fprintf(stderr, "step %d (%s): selector=%q text=%q path=%q\n", i, label, action.Selector, oneLine(action.Text), action.Path)
 			_, err := runWithRetry(ctx, &s, i, stderr, func(c context.Context) (transport.Result, error) {
-				return transport.Result{}, tr.GUI(c, t, action)
+				return transport.Result{}, tr.GUI(c, t, action, stdout, stderr)
 			})
 			dur := time.Since(start)
 			sr := StepResult{Index: i, Kind: label, Cmd: action.Kind, Name: s.Name, DurationMs: dur.Milliseconds()}

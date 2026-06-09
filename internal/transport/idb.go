@@ -90,7 +90,7 @@ func (i *idbTransport) Screenshot(ctx context.Context, t target.Target, path str
 	return nil
 }
 
-func (i *idbTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
+func (i *idbTransport) GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error {
 	return fmt.Errorf("idb: gui actions go through Maestro")
 }
 

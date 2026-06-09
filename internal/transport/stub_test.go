@@ -245,7 +245,7 @@ func TestABXLiveMode(t *testing.T) {
 
 	tr := NewABX()
 	tgt := target.Target{Settings: map[string]any{"abx": map[string]any{"mode": "live"}}}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "open-url", Path: "https://x"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "open-url", Path: "https://x"}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
@@ -274,6 +274,72 @@ func TestABXRunForwardsBrowserVerbs(t *testing.T) {
 	}
 }
 
+func TestABXRunWebNeverFallsBackToLocalExec(t *testing.T) {
+	// `vmlab web` routes through RunWeb, which must hand EVERY verb to abx —
+	// `open` is not an abx verb, and the old Run() fallback executed local
+	// /usr/bin/open with it instead of failing inside abx.
+	dir := t.TempDir()
+	abxArgs := stubBinary(t, dir, "abx", 0)
+	openArgs := stubBinary(t, dir, "open", 0)
+	withPath(t, dir)
+
+	tr := NewABX().(interface {
+		RunWeb(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error)
+	})
+	if _, err := tr.RunWeb(context.Background(), target.Target{}, []string{"open", "https://x"}, io.Discard, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got := readLastArgs(t, abxArgs)
+	if !strings.Contains(got, "open https://x") {
+		t.Errorf("expected abx to receive the verb, got: %s", got)
+	}
+	if _, err := os.Stat(openArgs); err == nil {
+		t.Error("local `open` binary was executed — RunWeb must not fall back to local exec")
+	}
+}
+
+func TestABXGUIWritesOutputToStdout(t *testing.T) {
+	// Read-style kinds (observe/tree) are useless if their report is
+	// discarded — agents act on the output.
+	dir := t.TempDir()
+	script := `#!/bin/sh
+echo "ax-tree-content"
+`
+	if err := os.WriteFile(filepath.Join(dir, "abx"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	var out bytes.Buffer
+	tr := NewABX()
+	if err := tr.GUI(context.Background(), target.Target{}, GUIAction{Kind: "observe"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "ax-tree-content") {
+		t.Errorf("observe output discarded; got %q", out.String())
+	}
+}
+
+func TestGuiportGUIWritesOutputToStdout(t *testing.T) {
+	dir := t.TempDir()
+	script := `#!/bin/sh
+echo "window: TextEdit"
+`
+	if err := os.WriteFile(filepath.Join(dir, "guiport"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	var out bytes.Buffer
+	tr := NewGuiport()
+	if err := tr.GUI(context.Background(), target.Target{}, GUIAction{Kind: "observe"}, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "window: TextEdit") {
+		t.Errorf("observe output discarded; got %q", out.String())
+	}
+}
+
 func TestGuiportClick(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "guiport", 0)
@@ -281,7 +347,7 @@ func TestGuiportClick(t *testing.T) {
 
 	tr := NewGuiport()
 	tgt := target.Target{Settings: map[string]any{"guiport": map[string]any{"app": "Calculator", "strict": true}}}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click", Selector: "AXButton[title=9]"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click", Selector: "AXButton[title=9]"}, io.Discard, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	got := readLastArgs(t, args)
@@ -343,7 +409,7 @@ func TestGuiportExpandedKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tr.GUI(ctx, tgt, tc.action); err != nil {
+			if err := tr.GUI(ctx, tgt, tc.action, io.Discard, io.Discard); err != nil {
 				t.Fatalf("GUI %s: %v", tc.action.Kind, err)
 			}
 			got := readLastArgs(t, args)
@@ -365,7 +431,7 @@ func TestGuiportWaitIsLocal(t *testing.T) {
 	tr := NewGuiport()
 	tgt := target.Target{}
 	start := time.Now()
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 120}}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 120}}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("wait: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
@@ -388,7 +454,7 @@ func TestSSHMacGUIInvokesRemoteGuiport(t *testing.T) {
 			"guiport": map[string]any{"app": "TextEdit"},
 		},
 	}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("click-text: %v", err)
 	}
 	raw, err := os.ReadFile(args)
@@ -435,7 +501,7 @@ func TestSSHWaylandBackendRoutesToWtype(t *testing.T) {
 			"ssh": map[string]any{"host": "lin.lan", "backend": "wayland"},
 		},
 	}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hello"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hello"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("type: %v", err)
 	}
 	got := readLastArgs(t, args)
@@ -458,7 +524,7 @@ func TestSSHWaylandRejectsClickText(t *testing.T) {
 			"ssh": map[string]any{"host": "lin.lan", "backend": "wayland"},
 		},
 	}
-	err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"})
+	err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Save"}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error: click-text needs atspi on wayland")
 	}
@@ -478,7 +544,7 @@ func TestSSHAutoBackendEmitsConditional(t *testing.T) {
 			"ssh": map[string]any{"host": "lin.lan"}, // no backend set → auto
 		},
 	}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "x"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "x"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("type: %v", err)
 	}
 	got := readLastArgs(t, args)
@@ -501,7 +567,7 @@ func TestSSHAtspiClickTextRoutesToPython(t *testing.T) {
 			"ssh": map[string]any{"host": "lin.lan", "uiMode": "atspi"},
 		},
 	}
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Allow"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "click-text", Text: "Allow"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("click-text: %v", err)
 	}
 	// AT-SPI ships a multi-line Python heredoc, so read the whole capture
@@ -534,7 +600,7 @@ func TestSSHAtspiFallsThroughForNonLabelVerbs(t *testing.T) {
 		},
 	}
 	// type/hotkey aren't AT-SPI verbs; should route to xdotool.
-	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hi"}); err != nil {
+	if err := tr.GUI(context.Background(), tgt, GUIAction{Kind: "type", Text: "hi"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("type: %v", err)
 	}
 	got := readLastArgs(t, args)
@@ -569,7 +635,7 @@ exit 1
 	err := tr.GUI(context.Background(), tgt, GUIAction{
 		Kind:  "approve",
 		Extra: map[string]any{"allow": []any{"OK"}, "timeout": "3s"},
-	})
+	}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -598,7 +664,7 @@ exit 1
 	err := tr.GUI(context.Background(), tgt, GUIAction{
 		Kind:  "approve",
 		Extra: map[string]any{"allow": []any{"OK", "Allow"}, "timeout": "3s"},
-	})
+	}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
@@ -618,7 +684,7 @@ func TestGuiportApproveTimesOutWhenNothingMatches(t *testing.T) {
 	err := tr.GUI(context.Background(), tgt, GUIAction{
 		Kind:  "approve",
 		Extra: map[string]any{"allow": []any{"Allow"}, "timeout": "200ms"},
-	})
+	}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected timeout error when no dialog matches")
 	}
@@ -652,7 +718,7 @@ exit 1
 			"deny":    []any{"Don't Send"},
 			"timeout": "1s",
 		},
-	}); err != nil {
+	}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "clicked"))
@@ -722,7 +788,7 @@ func TestABXGUIKinds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tr.GUI(ctx, tgt, tc.action); err != nil {
+			if err := tr.GUI(ctx, tgt, tc.action, io.Discard, io.Discard); err != nil {
 				t.Fatalf("GUI %s: %v", tc.action.Kind, err)
 			}
 			got := readLastArgs(t, args)
@@ -742,7 +808,7 @@ func TestABXWaitIsLocal(t *testing.T) {
 
 	tr := NewABX()
 	start := time.Now()
-	if err := tr.GUI(context.Background(), target.Target{}, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 100}}); err != nil {
+	if err := tr.GUI(context.Background(), target.Target{}, GUIAction{Kind: "wait", Extra: map[string]any{"milliseconds": 100}}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("wait: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed < 90*time.Millisecond {

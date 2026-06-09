@@ -186,7 +186,7 @@ func (s *sshTransport) Screenshot(ctx context.Context, t target.Target, path str
 //   - observe    — xdotool getactivewindow getwindowname
 //   - tree       — xdotool search --name "" (list of all windows)
 //   - open-url   — DISPLAY=… xdg-open <url>
-func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	if a.Kind == "wait" {
 		ms := extraInt(a.Extra, "milliseconds")
 		if ms == 0 {
@@ -217,7 +217,7 @@ func (s *sshTransport) GUI(ctx context.Context, t target.Target, a GUIAction) er
 	}
 	args := append(sshDialArgs(t), cmd)
 	var errb strings.Builder
-	res, err := runExternal(ctx, "ssh", args, io.Discard, &errb)
+	res, err := runExternal(ctx, "ssh", args, stdout, &errb)
 	if err != nil {
 		return err
 	}
@@ -600,7 +600,7 @@ func (s *sshTransport) approve(ctx context.Context, t target.Target, a GUIAction
 }
 
 func (s *sshTransport) tryClickText(ctx context.Context, t target.Target, label string) bool {
-	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label})
+	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label}, io.Discard, io.Discard)
 	return err == nil
 }
 

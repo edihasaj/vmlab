@@ -95,7 +95,7 @@ func (c *crabboxTransport) Screenshot(ctx context.Context, t target.Target, path
 	return nil
 }
 
-func (c *crabboxTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (c *crabboxTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	// crabbox can grab a frame; AX/OCR driving belongs to guiport.
 	if a.Kind == "screenshot" {
 		return c.Screenshot(ctx, t, a.Path)

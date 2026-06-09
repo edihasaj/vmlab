@@ -128,7 +128,7 @@ func (s *sshMacTransport) Screenshot(ctx context.Context, t target.Target, path 
 // GUI fans every verb the local guiport transport supports onto the remote
 // host via SSH. The verb argv is constructed identically to guiportTransport.GUI
 // so flows stay portable between mac-local-gui and ssh-mac targets.
-func (s *sshMacTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (s *sshMacTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	if a.Kind == "wait" {
 		ms := extraInt(a.Extra, "milliseconds")
 		if ms == 0 {
@@ -156,7 +156,7 @@ func (s *sshMacTransport) GUI(ctx context.Context, t target.Target, a GUIAction)
 	}
 	args := append(sshDialArgs(t), s.bin+" "+verb)
 	var errBuf bytes.Buffer
-	res, err := runExternal(ctx, "ssh", args, io.Discard, &errBuf)
+	res, err := runExternal(ctx, "ssh", args, stdout, &errBuf)
 	if err != nil {
 		return err
 	}
@@ -209,7 +209,7 @@ func (s *sshMacTransport) approve(ctx context.Context, t target.Target, a GUIAct
 }
 
 func (s *sshMacTransport) tryClickText(ctx context.Context, t target.Target, label string) bool {
-	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label})
+	err := s.GUI(ctx, t, GUIAction{Kind: "click-text", Text: label}, io.Discard, io.Discard)
 	return err == nil
 }
 

@@ -102,7 +102,7 @@ func (s *simctlTransport) Screenshot(ctx context.Context, t target.Target, path 
 	return nil
 }
 
-func (s *simctlTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
+func (s *simctlTransport) GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error {
 	return fmt.Errorf("simctl: gui actions go through Maestro or idb")
 }
 

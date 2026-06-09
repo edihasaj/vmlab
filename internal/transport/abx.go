@@ -46,6 +46,17 @@ func (a *abxTransport) Run(ctx context.Context, t target.Target, cmd []string, s
 	return runExternal(ctx, cmd[0], cmd[1:], stdout, stderr)
 }
 
+// RunWeb forwards argv to abx unconditionally. `vmlab web` uses this instead
+// of Run so an unknown verb errors loudly inside abx (exit 1) rather than
+// silently executing a same-named local binary — `vmlab web t -- open url`
+// must never reach /usr/bin/open.
+func (a *abxTransport) RunWeb(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {
+	if len(cmd) == 0 {
+		return Result{ExitCode: 0}, nil
+	}
+	return a.runABX(ctx, t, cmd, stdout, stderr)
+}
+
 func (a *abxTransport) Sync(ctx context.Context, t target.Target, src string) error { return nil }
 
 func (a *abxTransport) Shell(ctx context.Context, t target.Target) error {
@@ -80,7 +91,7 @@ func (a *abxTransport) Screenshot(ctx context.Context, t target.Target, path str
 //   - tree       — abx snapshot
 //   - open-url   — abx goto <url>
 //   - run        — abx <args from Path> (raw forwarding for advanced cases)
-func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
+func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error {
 	var verb []string
 	switch action.Kind {
 	case "screenshot":
@@ -148,7 +159,7 @@ func (a *abxTransport) GUI(ctx context.Context, t target.Target, action GUIActio
 	default:
 		return fmt.Errorf("abx: unsupported gui kind %q", action.Kind)
 	}
-	res, err := a.runABX(ctx, t, verb, io.Discard, io.Discard)
+	res, err := a.runABX(ctx, t, verb, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -176,18 +187,25 @@ func abxArgs(t target.Target, extra []string) []string {
 	return args
 }
 
+// isABXVerb routes flow `run:` steps on abx targets: known verbs go to abx,
+// anything else lands in the local shell. Keep in sync with `abx --help`
+// (the list abx prints on an unknown command is authoritative). `vmlab web`
+// bypasses this entirely via RunWeb, so a stale entry here only affects flows.
 func isABXVerb(verb string) bool {
 	switch verb {
 	case "goto", "back", "forward", "reload", "url",
 		"text", "html", "links", "forms", "accessibility",
 		"click", "fill", "select", "hover", "type", "press", "scroll", "wait", "viewport", "upload",
+		"focus", "frame", "load-html",
 		"cookie-import", "cookie-import-browser",
 		"js", "eval", "css", "attrs", "console", "network", "dialog", "cookies", "storage", "perf", "is",
-		"screenshot", "pdf", "responsive",
-		"snapshot", "diff",
-		"live", "chain",
-		"tabs", "tab", "newtab", "closetab",
-		"status", "cookie", "header", "useragent", "stop", "restart",
+		"inspect", "state", "style", "media", "data",
+		"screenshot", "pdf", "responsive", "prettyscreenshot", "ux-audit",
+		"snapshot", "diff", "scrape", "archive", "download", "watch",
+		"live", "chain", "cdp", "connect", "disconnect",
+		"tabs", "tab", "newtab", "closetab", "tab-each",
+		"status", "cookie", "header", "useragent", "stop", "restart", "cleanup", "resume",
+		"skill", "domain-skill", "handoff", "inbox",
 		"dialog-accept", "dialog-dismiss":
 		return true
 	default:

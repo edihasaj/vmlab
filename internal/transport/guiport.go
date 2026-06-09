@@ -155,7 +155,7 @@ func guiportAppBundle(t target.Target) string {
 	return ""
 }
 
-func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	var args []string
 	app := appFlags(t)
 	switch a.Kind {
@@ -237,7 +237,7 @@ func (g *guiportTransport) GUI(ctx context.Context, t target.Target, a GUIAction
 		}
 		args = append(args, "--"+k, fmt.Sprintf("%v", v))
 	}
-	res, err := runExternal(ctx, g.bin, args, io.Discard, io.Discard)
+	res, err := runExternal(ctx, g.bin, args, stdout, stderr)
 	if err != nil {
 		return err
 	}

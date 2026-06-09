@@ -25,7 +25,7 @@ func (s *stubTransport) Doctor(ctx context.Context, t target.Target) transport.H
 func (s *stubTransport) Sync(ctx context.Context, t target.Target, src string) error     { return nil }
 func (s *stubTransport) Shell(ctx context.Context, t target.Target) error                { return nil }
 func (s *stubTransport) Screenshot(ctx context.Context, t target.Target, p string) error { return nil }
-func (s *stubTransport) GUI(ctx context.Context, t target.Target, a transport.GUIAction) error {
+func (s *stubTransport) GUI(ctx context.Context, t target.Target, a transport.GUIAction, stdout, stderr io.Writer) error {
 	return nil
 }
 func (s *stubTransport) Run(ctx context.Context, t target.Target, cmd []string, so, se io.Writer) (transport.Result, error) {

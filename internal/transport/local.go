@@ -75,6 +75,6 @@ func (l *localTransport) Screenshot(ctx context.Context, t target.Target, path s
 	return fmt.Errorf("local: screenshot not supported")
 }
 
-func (l *localTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (l *localTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	return fmt.Errorf("local: gui not supported")
 }

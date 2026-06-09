@@ -342,7 +342,7 @@ func (p *parallelsGuestTransport) Screenshot(ctx context.Context, t target.Targe
 //
 // The script is delivered via PowerShell -EncodedCommand so embedded
 // quotes survive the ssh→prlctl→cmd.exe layered quoting.
-func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GUIAction) error {
+func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	if a.Kind == "wait" {
 		ms := extraInt(a.Extra, "milliseconds")
 		if ms == 0 {
@@ -387,7 +387,7 @@ func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GU
 		return err
 	}
 	var errb strings.Builder
-	res, err := runExternal(ctx, args[0], args[1:], io.Discard, &errb)
+	res, err := runExternal(ctx, args[0], args[1:], stdout, &errb)
 	if err != nil {
 		return err
 	}

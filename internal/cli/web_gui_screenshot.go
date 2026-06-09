@@ -22,7 +22,14 @@ func newWebCmd() *cobra.Command {
 				return err
 			}
 			rest := stripDashDash(args[1:])
-			res, err := tr.Run(cmd.Context(), t, rest, cmd.OutOrStdout(), cmd.ErrOrStderr())
+			// Force the abx path: Run() falls back to local exec for non-abx
+			// verbs (a flow convenience), which here would silently run e.g.
+			// /usr/bin/open. RunWeb hands everything to abx so typos fail loud.
+			wr, ok := tr.(transport.WebRunner)
+			if !ok {
+				return fmt.Errorf("transport %q does not support web actions", t.Transport)
+			}
+			res, err := wr.RunWeb(cmd.Context(), t, rest, cmd.OutOrStdout(), cmd.ErrOrStderr())
 			if err != nil {
 				return err
 			}
@@ -71,7 +78,7 @@ func newGUICmd() *cobra.Command {
 			if len(extra) > 0 {
 				a.Extra = extra
 			}
-			return tr.GUI(cmd.Context(), t, a)
+			return tr.GUI(cmd.Context(), t, a, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	c.Flags().StringVar(&kind, "kind", "", "action kind: click | click-text | click-at | type | hotkey | screenshot | observe | tree | wait | run")

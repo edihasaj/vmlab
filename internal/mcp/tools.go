@@ -306,8 +306,12 @@ func handleWeb(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
+	wr, ok := tr.(transport.WebRunner)
+	if !ok {
+		return helperError(fmt.Sprintf("transport %q does not support web actions", t.Transport)), nil
+	}
 	var stdout, stderr bytes.Buffer
-	res, err := tr.Run(ctx, t, args, &stdout, &stderr)
+	res, err := wr.RunWeb(ctx, t, args, &stdout, &stderr)
 	if err != nil {
 		return helperError(err.Error()), nil
 	}
@@ -575,15 +579,23 @@ func handleGUI(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolR
 		Text:     stringArg(req, "text", ""),
 		Path:     stringArg(req, "path", ""),
 	}
-	if err := tr.GUI(ctx, t, action); err != nil {
+	var outBuf, errBuf bytes.Buffer
+	if err := tr.GUI(ctx, t, action, &outBuf, &errBuf); err != nil {
 		payload := map[string]any{"error": err.Error()}
+		if s := strings.TrimSpace(errBuf.String()); s != "" {
+			payload["stderr"] = s
+		}
 		if needs := inferNeedsGrant(t.Transport, err); len(needs) > 0 {
 			payload["needsGrant"] = needs
 			payload["hint"] = "call vmlab_grant with one of needsGrant; human Touch ID is still required for the OS prompt"
 		}
 		return helperError(mustJSON(payload)), nil
 	}
-	return helperResult(mustJSON(map[string]any{"ok": true})), nil
+	result := map[string]any{"ok": true}
+	if s := strings.TrimSpace(outBuf.String()); s != "" {
+		result["output"] = s
+	}
+	return helperResult(mustJSON(result)), nil
 }
 
 // inferNeedsGrant pattern-matches transport errors for known "not trusted"

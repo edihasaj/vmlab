@@ -114,7 +114,7 @@ func (a *adbTransport) Screenshot(ctx context.Context, t target.Target, path str
 	return nil
 }
 
-func (a *adbTransport) GUI(ctx context.Context, t target.Target, action GUIAction) error {
+func (a *adbTransport) GUI(ctx context.Context, t target.Target, action GUIAction, stdout, stderr io.Writer) error {
 	return fmt.Errorf("adb: gui actions go through Maestro or input commands")
 }
 
