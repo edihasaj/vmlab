@@ -143,8 +143,11 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 	}
 	enc := extractEncodedCommand(t, got)
 	decoded := decodePowerShell(t, enc)
-	if !strings.Contains(decoded, "PSVersionTable") {
-		t.Errorf("expected PSVersionTable probe in decoded ps: %s", decoded)
+	// The probe must be an invocable command (hostname.exe), not a bare
+	// expression — vmlab wraps argv as `& 'arg0' …`, so an expression like
+	// $PSVersionTable would become `& '$PSVersionTable…'` and fail.
+	if !strings.Contains(decoded, "hostname") {
+		t.Errorf("expected hostname probe in decoded ps: %s", decoded)
 	}
 }
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `examples/flows/windows-provision.yaml` — a reusable flow to provision a
+  Windows target with Python (winget, machine scope) and IIS, enabling the IIS
+  feature via the native `dism.exe` CLI (the DISM PowerShell cmdlet throws
+  "Class not registered" in a remote ARM64 session).
+
+### Fixed
+
+- `ssh-windows` doctor no longer reports a false-negative on healthy hosts. The
+  probe used a bare PowerShell expression (`$PSVersionTable…`), which vmlab's
+  `& 'arg0' …` invoke model turned into `& '$PSVersionTable…'` and failed; the
+  benign OpenSSH post-quantum warning then masked the real error. The probe now
+  uses an invocable command (`hostname`), and failure messages skip the
+  post-quantum advisory banner so the actual error surfaces.
+- `ssh-windows` screenshot pull now passes `-o IdentitiesOnly=yes` /
+  `BatchMode=yes` (matching `Sync`) so it no longer trips "Too many
+  authentication failures", and rewrites the remote Windows temp path to
+  forward slashes so scp resolves it instead of treating `\` as escapes.
+
 ## [0.2.3] - 2026-06-10
 
 ### Fixed

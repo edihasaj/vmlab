@@ -1,0 +1,33 @@
+name: windows-provision
+# Provision a Windows target (e.g. a Parallels Win11 guest) with the tooling a
+# vmlab-driven dev/test loop expects. Idempotent: re-running is a no-op once the
+# pieces are present.
+#
+#   vmlab run win11-ssh examples/flows/windows-provision.yaml
+#
+# Notes:
+#   - Steps run in the target's ssh session. For IIS the session must be elevated
+#     (an admin user's Windows OpenSSH session already carries a full token; if
+#     not, register elevation first: `vmlab elevate setup <target>` and set
+#     ssh.elevated: true on the target).
+#   - IIS is enabled via the native dism.exe CLI rather than the
+#     Enable-WindowsOptionalFeature cmdlet: on Windows ARM64 the DISM PowerShell
+#     module throws "Class not registered" in a remote session, but dism.exe works.
+steps:
+  - name: Install Python 3.12 (machine scope)
+    install:
+      windows: winget install --id Python.Python.3.12 -e --scope machine --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+
+  - name: Verify Python is installed
+    assert: "if (-not (Get-ChildItem 'C:\\Program Files\\Python3*\\python.exe' -ErrorAction SilentlyContinue)) { exit 1 }"
+
+  - name: Enable IIS web server role
+    install:
+      windows: dism.exe /online /enable-feature /featurename:IIS-WebServerRole /all /norestart
+
+  - name: Enable IIS core web server
+    install:
+      windows: dism.exe /online /enable-feature /featurename:IIS-WebServer /all /norestart
+
+  - name: Start and verify the IIS service (W3SVC)
+    assert: "$svc = Get-Service W3SVC -ErrorAction SilentlyContinue; if (-not $svc) { exit 1 }; if ($svc.Status -ne 'Running') { Start-Service W3SVC }; if ((Get-Service W3SVC).Status -ne 'Running') { exit 1 }"

@@ -21,6 +21,21 @@ func firstLine(s string) string {
 	return s
 }
 
+// firstMeaningfulLine returns the first stderr line that is not an OpenSSH
+// advisory banner. Modern OpenSSH clients print a multi-line "** WARNING:
+// connection is not using a post-quantum key exchange algorithm" notice to
+// stderr on every connect; it is benign and must not mask the real error.
+func firstMeaningfulLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "**") {
+			continue
+		}
+		return trimmed
+	}
+	return firstLine(strings.TrimSpace(s))
+}
+
 // sshWindowsTransport runs commands on a remote Windows host over the OpenSSH
 // server that ships with Windows 10/11 + Windows Server (the modern norm).
 //
@@ -69,8 +84,12 @@ func (s *sshWindowsTransport) Doctor(ctx context.Context, t target.Target) Healt
 	if t.SettingString("ssh", "host") == "" {
 		return Health{OK: false, Message: "ssh.host is required"}
 	}
-	// Probe with a shell-appropriate no-op so we exercise the chosen path.
-	probe := []string{"$PSVersionTable.PSVersion.ToString()"}
+	// Probe with an executable present on every Windows host. vmlab ships argv
+	// via the `& 'arg0' …` invoke pattern, so the probe must be an invocable
+	// command (hostname.exe) — a bare PowerShell expression like
+	// `$PSVersionTable...` becomes `& '$PSVersionTable...'`, which fails and
+	// reports a false-negative.
+	probe := []string{"hostname"}
 	if winShell(t) == "cmd" {
 		probe = []string{"ver"}
 	}
@@ -88,7 +107,7 @@ func (s *sshWindowsTransport) Doctor(ctx context.Context, t target.Target) Healt
 		if msg == "" {
 			msg = fmt.Sprintf("ssh exit=%d", res.ExitCode)
 		} else {
-			msg = fmt.Sprintf("ssh exit=%d: %s", res.ExitCode, firstLine(msg))
+			msg = fmt.Sprintf("ssh exit=%d: %s", res.ExitCode, firstMeaningfulLine(msg))
 		}
 		return Health{OK: false, Message: msg}
 	}
@@ -290,12 +309,20 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 	if remotePath == "" {
 		return fmt.Errorf("ssh-windows: remote screenshot returned empty path")
 	}
+	// Windows reports the temp path with backslashes (C:\Users\...\vmlab-shot.png).
+	// scp treats backslashes as escape characters in the remote spec, so the pull
+	// silently resolves the wrong path and fails — forward slashes are accepted by
+	// Windows OpenSSH and survive scp's remote-path parsing intact.
+	remotePath = strings.ReplaceAll(remotePath, "\\", "/")
 	// Pull the PNG back via scp. rsync would also work but scp is universal.
 	host := t.SettingString("ssh", "host")
 	user := winSSHUser(t)
-	args := []string{"-q", "-o", "StrictHostKeyChecking=" + winSSHStrict(t)}
+	args := []string{"-q", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=" + winSSHStrict(t)}
 	if id := t.SettingString("ssh", "identity"); id != "" {
-		args = append(args, "-i", id)
+		// IdentitiesOnly stops ssh/scp offering every agent key first, which
+		// otherwise trips "Too many authentication failures" before the
+		// configured identity is tried.
+		args = append(args, "-i", id, "-o", "IdentitiesOnly=yes")
 	}
 	if port := t.SettingString("ssh", "port"); port != "" {
 		args = append(args, "-P", port)
