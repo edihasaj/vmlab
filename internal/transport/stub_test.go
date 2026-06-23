@@ -615,7 +615,7 @@ func TestSSHApproveFallsBackToReturnKey(t *testing.T) {
 	// succeed on the Return-key fallback path. We discriminate by whether
 	// the remote command contains `xdotool key`.
 	script := `#!/bin/sh
-last="${@: -1}"
+for last in "$@"; do :; done
 case "$last" in
   *"xdotool key"*"Return"*) echo "$last" >> "` + dir + `/keypress"; exit 0 ;;
 esac
