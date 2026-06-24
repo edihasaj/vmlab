@@ -39,6 +39,19 @@ func TestWrapForExec_WindowsUsesPushdAndSet(t *testing.T) {
 	}
 }
 
+func TestWrapForExec_WindowsPwshUsesEnvAndSetLocation(t *testing.T) {
+	tgt := target.Target{
+		Name:      "w",
+		Transport: "ssh-windows",
+		Settings:  map[string]any{"ssh": map[string]any{"shell": "pwsh"}},
+	}
+	got := wrapForExec(tgt, "dotnet test", `C:\dayshape`, map[string]string{"CFG": "Debug"})
+	want := `$env:CFG='Debug'; Set-Location -LiteralPath 'C:\dayshape'; dotnet test`
+	if got != want {
+		t.Fatalf("windows pwsh wrap mismatch\n got: %q\nwant: %q", got, want)
+	}
+}
+
 func TestWrapForExec_PosixUsesExportAndCd(t *testing.T) {
 	tgt := target.Target{Name: "u", Transport: "ssh"}
 	got := wrapForExec(tgt, "make test", "/srv/src", map[string]string{"CGO": "0"})

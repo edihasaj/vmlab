@@ -24,11 +24,20 @@ func TestWrapShell(t *testing.T) {
 			want: []string{"cmd.exe", "/c", "echo hi"},
 		},
 		{
-			name: "ssh-windows with ssh.shell=pwsh uses powershell",
+			name: "ssh-windows with ssh.shell=pwsh uses pwsh.exe (PowerShell 7+)",
 			tgt: target.Target{
 				Name:      "w",
 				Transport: "ssh-windows",
 				Settings:  map[string]any{"ssh": map[string]any{"shell": "pwsh"}},
+			},
+			want: []string{"pwsh.exe", "-NoProfile", "-Command", "echo hi"},
+		},
+		{
+			name: "ssh-windows with ssh.shell=powershell uses powershell.exe (5.1)",
+			tgt: target.Target{
+				Name:      "w",
+				Transport: "ssh-windows",
+				Settings:  map[string]any{"ssh": map[string]any{"shell": "powershell"}},
 			},
 			want: []string{"powershell.exe", "-NoProfile", "-Command", "echo hi"},
 		},

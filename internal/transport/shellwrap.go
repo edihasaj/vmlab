@@ -14,12 +14,18 @@ import (
 //
 // Choice order:
 //  1. target.OSKind() == "windows" → cmd.exe /c by default; ssh.shell hint
-//     ("pwsh"/"powershell") flips to PowerShell.
+//     flips to PowerShell — "pwsh" → pwsh.exe (PowerShell 7+, supports `&&`),
+//     "powershell" → powershell.exe (Windows PowerShell 5.1).
 //  2. otherwise → posix sh -lc.
+//
+// pwsh.exe and powershell.exe are different binaries with different syntax
+// support; wrapForExec emits the env/workdir prefix that matches the choice.
 func WrapShell(t target.Target, cmdLine string) []string {
 	if t.OSKind() == "windows" {
 		switch strings.ToLower(strings.TrimSpace(t.SettingString("ssh", "shell"))) {
-		case "pwsh", "powershell":
+		case "pwsh":
+			return []string{"pwsh.exe", "-NoProfile", "-Command", cmdLine}
+		case "powershell":
 			return []string{"powershell.exe", "-NoProfile", "-Command", cmdLine}
 		}
 		return []string{"cmd.exe", "/c", cmdLine}

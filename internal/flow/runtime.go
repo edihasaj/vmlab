@@ -119,6 +119,28 @@ func wrapForExec(t target.Target, cmd, workdir string, env map[string]string) st
 		return cmd
 	}
 	if t.OSKind() == "windows" {
+		// The env/workdir prefix must match the shell WrapShell will pick for
+		// this target (ssh.shell): PowerShell can't parse cmd.exe's `set "K=V"`
+		// or `&&` (Windows PowerShell 5.1 rejects `&&` outright), and cmd.exe
+		// can't parse `$env:`/`Set-Location`. Emit syntax for the right one.
+		switch strings.ToLower(strings.TrimSpace(t.SettingString("ssh", "shell"))) {
+		case "pwsh", "powershell":
+			var b strings.Builder
+			for k, v := range env {
+				b.WriteString(`$env:`)
+				b.WriteString(k)
+				b.WriteString(`='`)
+				b.WriteString(strings.ReplaceAll(v, "'", "''"))
+				b.WriteString(`'; `)
+			}
+			if workdir != "" {
+				b.WriteString(`Set-Location -LiteralPath '`)
+				b.WriteString(strings.ReplaceAll(workdir, "'", "''"))
+				b.WriteString(`'; `)
+			}
+			b.WriteString(cmd)
+			return b.String()
+		}
 		var b strings.Builder
 		for k, v := range env {
 			b.WriteString(`set "`)
