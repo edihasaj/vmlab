@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-24
+
 ### Added
 
+- `vmlab verify [project]` — a project-aware command so callers don't have to
+  remember which flow/target pairs with which repo. Project profiles live at
+  `~/.vmlab/projects/<name>.yaml` (name, path, target, flow). With no argument
+  it auto-detects the profile whose `path:` is the deepest ancestor of the
+  working directory; `verify <name>` resolves by name; `--list` shows them and
+  `--dry-run` previews the plan. `run` and `verify` now share one execution
+  path (`executeTargetRun`).
 - `examples/flows/windows-provision.yaml` — a reusable flow to provision a
   Windows target with Python (winget, machine scope) and IIS, enabling the IIS
   feature via the native `dism.exe` CLI (the DISM PowerShell cmdlet throws
@@ -16,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Flow `run:`/`assert:` steps on an `ssh.shell=pwsh` Windows target were wrapped
+  as `powershell.exe` (Windows PowerShell 5.1) while the prefix used cmd.exe
+  syntax (`set "K=V" && …`), which PS 5.1 rejects at parse time, so every step
+  failed before running. `shell=pwsh` now maps to `pwsh.exe` (PowerShell 7+,
+  which supports `&&`) and emits a PowerShell-native env/workdir prefix; the
+  cmd.exe default path is unchanged.
 - `ssh-windows` doctor no longer reports a false-negative on healthy hosts. The
   probe used a bare PowerShell expression (`$PSVersionTable…`), which vmlab's
   `& 'arg0' …` invoke model turned into `& '$PSVersionTable…'` and failed; the
@@ -26,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BatchMode=yes` (matching `Sync`) so it no longer trips "Too many
   authentication failures", and rewrites the remote Windows temp path to
   forward slashes so scp resolves it instead of treating `\` as escapes.
+- CI: the `approve` Return-key fallback test stub used the bash-only
+  `${@: -1}` expansion, which fails under Ubuntu's dash (`Bad substitution`),
+  reddening CI since v0.2.3. Replaced with a POSIX last-arg idiom.
 
 ## [0.2.3] - 2026-06-10
 
