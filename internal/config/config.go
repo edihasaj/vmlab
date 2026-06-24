@@ -48,6 +48,7 @@ type Paths struct {
 	StateDir    string   // <UserDir>/state — file locks, ephemeral bookkeeping
 	TargetDir   []string // ordered: user first, repo overrides
 	InstanceDir []string // ordered: user first, repo overrides
+	ProjectDir  []string // ordered: user first, repo overrides — project profiles for `vmlab verify`
 }
 
 // ResolvePaths returns the canonical paths used by vmlab.
@@ -81,6 +82,10 @@ func ResolvePaths() (Paths, error) {
 		InstanceDir: []string{
 			filepath.Join(userDir, "instances"),
 			filepath.Join(repoDir, "instances"),
+		},
+		ProjectDir: []string{
+			filepath.Join(userDir, "projects"),
+			filepath.Join(repoDir, "projects"),
 		},
 	}
 	return p, nil
@@ -139,6 +144,7 @@ func EnsureDirs(p Paths) error {
 		p.UserDir,
 		filepath.Join(p.UserDir, "targets"),
 		filepath.Join(p.UserDir, "instances"),
+		filepath.Join(p.UserDir, "projects"),
 		p.RunsDir,
 		p.StateDir,
 	} {
@@ -157,6 +163,11 @@ func (p Paths) TargetFiles() ([]string, error) {
 // InstanceFiles returns all .yaml/.yml files under InstanceDir, repo-level last.
 func (p Paths) InstanceFiles() ([]string, error) {
 	return collectYAML(p.InstanceDir)
+}
+
+// ProjectFiles returns all .yaml/.yml files under ProjectDir, repo-level last.
+func (p Paths) ProjectFiles() ([]string, error) {
+	return collectYAML(p.ProjectDir)
 }
 
 func collectYAML(dirs []string) ([]string, error) {

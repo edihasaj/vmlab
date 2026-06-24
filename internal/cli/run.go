@@ -117,133 +117,15 @@ Examples:
 				cmdLine = strings.Join(rest, " ")
 			}
 
-			if dryRun {
-				return printPlan(cmd.OutOrStdout(), selectorArg, ts, loadedFlow, cmdLine, asJSON)
-			}
-
-			reg := transport.Default()
-			var run *evidence.Run
-			if !noEvidence {
-				run, err = evidence.New(p.RunsDir)
-				if err != nil {
-					return err
-				}
-				if loadedFlow != nil {
-					run.SetFlow(loadedFlow.SourceFile)
-				} else {
-					run.SetCmd(cmdLine)
-				}
-				run.SetSelector(selectorArg)
-			}
-
-			if maxParallel == 0 {
-				maxParallel = cfg.DefaultMaxParallel
-			}
-			opts := fleet.Options{
-				MaxParallel:     maxParallel,
-				FailFast:        failFast,
-				ContinueOnError: continueOnError,
-			}
-
-			outcomes, runErr := fleet.Run(cmd.Context(), ts, reg, opts, cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				func(ctx context.Context, t target.Target, tr transport.Transport, stdout, stderr io.Writer) (int, error) {
-					var teeOut, teeErr io.Writer = stdout, stderr
-					var logs *evidence.TargetLogs
-					if run != nil {
-						o, e, l, err := run.TargetWriters(t.Name, stdout, stderr)
-						if err != nil {
-							return 0, err
-						}
-						teeOut, teeErr, logs = o, e, l
-						defer logs.Close()
-					}
-					if loadedFlow != nil {
-						steps, err := flow.Run(ctx, tr, t, loadedFlow, teeOut, teeErr)
-						if run != nil {
-							run.WriteSteps(t.Name, steps)
-						}
-						if err != nil {
-							return lastExit(steps, err), err
-						}
-						return 0, nil
-					}
-					res, err := tr.Run(ctx, t, transport.WrapShell(t, cmdLine), teeOut, teeErr)
-					return res.ExitCode, err
-				})
-
-			exit := fleet.AggregateExit(outcomes)
-			if run != nil {
-				for _, o := range outcomes {
-					sum := evidence.TargetSummary{
-						Name:      o.Target.Name,
-						Transport: o.Target.Transport,
-						ExitCode:  o.ExitCode,
-						Duration:  o.Duration.Milliseconds(),
-					}
-					if o.Error != nil {
-						sum.Error = o.Error.Error()
-					}
-					run.AddTarget(sum)
-				}
-				meta, _ := run.Finish(exit)
-				if _, err := run.WriteJUnit(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "junit: %v\n", err)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s)\n", meta.ID, run.Dir)
-			}
-
-			if isMatrixFormat(format) {
-				rows := make([]MatrixRow, 0, len(outcomes))
-				runDir := ""
-				if run != nil {
-					runDir = run.Dir
-				}
-				for _, o := range outcomes {
-					row := MatrixRow{
-						Target:     o.Target.Name,
-						Transport:  o.Target.Transport,
-						Status:     "pass",
-						ExitCode:   o.ExitCode,
-						DurationMs: o.Duration.Milliseconds(),
-					}
-					if o.ExitCode != 0 || o.Error != nil {
-						row.Status = "fail"
-						if o.Error != nil {
-							row.Error = o.Error.Error()
-						}
-						row.Tail = tailStderr(runDir, o.Target.Name)
-					}
-					rows = append(rows, row)
-				}
-				_ = emitMatrix(cmd.OutOrStdout(), rows)
-			} else if asJSON {
-				type row struct {
-					Target     string `json:"target"`
-					ExitCode   int    `json:"exitCode"`
-					Error      string `json:"error,omitempty"`
-					DurationMs int64  `json:"durationMs"`
-				}
-				rows := make([]row, 0, len(outcomes))
-				for _, o := range outcomes {
-					r := row{Target: o.Target.Name, ExitCode: o.ExitCode, DurationMs: o.Duration.Milliseconds()}
-					if o.Error != nil {
-						r.Error = o.Error.Error()
-					}
-					rows = append(rows, r)
-				}
-				_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
-					"results": rows,
-					"exit":    exit,
-				})
-			}
-
-			if runErr != nil || exit != 0 {
-				if exit == 0 {
-					exit = 1
-				}
-				os.Exit(exit)
-			}
-			return nil
+			return executeTargetRun(cmd, p, cfg, selectorArg, ts, loadedFlow, cmdLine, runFlags{
+				maxParallel:     maxParallel,
+				failFast:        failFast,
+				continueOnError: continueOnError,
+				asJSON:          asJSON,
+				noEvidence:      noEvidence,
+				dryRun:          dryRun,
+				format:          format,
+			})
 		},
 	}
 	c.Flags().IntVar(&maxParallel, "max-parallel", 0, "max concurrent targets (0 = all)")
@@ -258,6 +140,152 @@ Examples:
 	c.Flags().StringVar(&format, "format", "", "compact output: matrix (newline-delimited JSON, one row per target/instance, stderr tail on failure)")
 	c.Flags().StringVar(&logPath, "log", "", "tee merged stdout+stderr to a file (useful when running detached: `vmlab run … --log out.log &`)")
 	return c
+}
+
+// runFlags carries the execution knobs shared by `run` and `verify`.
+type runFlags struct {
+	maxParallel     int
+	failFast        bool
+	continueOnError bool
+	asJSON          bool
+	noEvidence      bool
+	dryRun          bool
+	format          string
+}
+
+// executeTargetRun runs a flow (or shell command) against already-resolved
+// targets, handling evidence capture, output formatting, and exit propagation.
+// It is the shared core behind `vmlab run` and `vmlab verify`.
+func executeTargetRun(cmd *cobra.Command, p config.Paths, cfg config.Config, selectorArg string, ts []target.Target, loadedFlow *flow.Flow, cmdLine string, fl runFlags) error {
+	if fl.dryRun {
+		return printPlan(cmd.OutOrStdout(), selectorArg, ts, loadedFlow, cmdLine, fl.asJSON)
+	}
+
+	reg := transport.Default()
+	var run *evidence.Run
+	var err error
+	if !fl.noEvidence {
+		run, err = evidence.New(p.RunsDir)
+		if err != nil {
+			return err
+		}
+		if loadedFlow != nil {
+			run.SetFlow(loadedFlow.SourceFile)
+		} else {
+			run.SetCmd(cmdLine)
+		}
+		run.SetSelector(selectorArg)
+	}
+
+	maxParallel := fl.maxParallel
+	if maxParallel == 0 {
+		maxParallel = cfg.DefaultMaxParallel
+	}
+	opts := fleet.Options{
+		MaxParallel:     maxParallel,
+		FailFast:        fl.failFast,
+		ContinueOnError: fl.continueOnError,
+	}
+
+	outcomes, runErr := fleet.Run(cmd.Context(), ts, reg, opts, cmd.OutOrStdout(), cmd.ErrOrStderr(),
+		func(ctx context.Context, t target.Target, tr transport.Transport, stdout, stderr io.Writer) (int, error) {
+			var teeOut, teeErr io.Writer = stdout, stderr
+			var logs *evidence.TargetLogs
+			if run != nil {
+				o, e, l, err := run.TargetWriters(t.Name, stdout, stderr)
+				if err != nil {
+					return 0, err
+				}
+				teeOut, teeErr, logs = o, e, l
+				defer logs.Close()
+			}
+			if loadedFlow != nil {
+				steps, err := flow.Run(ctx, tr, t, loadedFlow, teeOut, teeErr)
+				if run != nil {
+					run.WriteSteps(t.Name, steps)
+				}
+				if err != nil {
+					return lastExit(steps, err), err
+				}
+				return 0, nil
+			}
+			res, err := tr.Run(ctx, t, transport.WrapShell(t, cmdLine), teeOut, teeErr)
+			return res.ExitCode, err
+		})
+
+	exit := fleet.AggregateExit(outcomes)
+	if run != nil {
+		for _, o := range outcomes {
+			sum := evidence.TargetSummary{
+				Name:      o.Target.Name,
+				Transport: o.Target.Transport,
+				ExitCode:  o.ExitCode,
+				Duration:  o.Duration.Milliseconds(),
+			}
+			if o.Error != nil {
+				sum.Error = o.Error.Error()
+			}
+			run.AddTarget(sum)
+		}
+		meta, _ := run.Finish(exit)
+		if _, err := run.WriteJUnit(); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "junit: %v\n", err)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "\nrun-id: %s (%s)\n", meta.ID, run.Dir)
+	}
+
+	if isMatrixFormat(fl.format) {
+		rows := make([]MatrixRow, 0, len(outcomes))
+		runDir := ""
+		if run != nil {
+			runDir = run.Dir
+		}
+		for _, o := range outcomes {
+			row := MatrixRow{
+				Target:     o.Target.Name,
+				Transport:  o.Target.Transport,
+				Status:     "pass",
+				ExitCode:   o.ExitCode,
+				DurationMs: o.Duration.Milliseconds(),
+			}
+			if o.ExitCode != 0 || o.Error != nil {
+				row.Status = "fail"
+				if o.Error != nil {
+					row.Error = o.Error.Error()
+				}
+				row.Tail = tailStderr(runDir, o.Target.Name)
+			}
+			rows = append(rows, row)
+		}
+		_ = emitMatrix(cmd.OutOrStdout(), rows)
+	} else if fl.asJSON {
+		type row struct {
+			Target     string `json:"target"`
+			ExitCode   int    `json:"exitCode"`
+			Error      string `json:"error,omitempty"`
+			DurationMs int64  `json:"durationMs"`
+		}
+		rows := make([]row, 0, len(outcomes))
+		for _, o := range outcomes {
+			r := row{Target: o.Target.Name, ExitCode: o.ExitCode, DurationMs: o.Duration.Milliseconds()}
+			if o.Error != nil {
+				r.Error = o.Error.Error()
+			}
+			rows = append(rows, r)
+		}
+		_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+			"results": rows,
+			"exit":    exit,
+		})
+	}
+
+	if runErr != nil || exit != 0 {
+		if exit == 0 {
+			exit = 1
+		}
+		os.Exit(exit)
+	}
+	return nil
 }
 
 func printPlan(w io.Writer, selectorArg string, ts []target.Target, f *flow.Flow, cmdLine string, asJSON bool) error {

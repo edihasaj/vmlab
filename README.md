@@ -76,6 +76,7 @@ vmlab evidence show <run-id>
 | `vmlab doctor [selector]` | Check transport binaries on PATH and per-target reachability. |
 | `vmlab run <selector> <flow.yaml>` | Run a flow against the selected targets. |
 | `vmlab run <selector> -- <cmd...>` | Run a shell command across targets. |
+| `vmlab verify [project]` | Run a project's saved flow against its target — auto-detected from the working directory, or by name. |
 | `vmlab shell <target>` | Open an interactive shell on a target. |
 | `vmlab web <target> -- <abx-args...>` | Drive a web target via abx. |
 | `vmlab gui <target> --kind click --selector ...` | Drive a desktop target via guiport. |
@@ -101,6 +102,25 @@ Extra `run` flags:
 - `--dry-run` prints the resolved plan (targets + steps) without executing.
 - `--no-evidence` skips writing the bundle.
 - `--max-parallel N`, `--fail-fast`, `--continue-on-error` control fan-out.
+
+### Project profiles (`vmlab verify`)
+
+So you don't have to remember which flow/target pairs with which repo, save a
+**project profile** at `~/.vmlab/projects/<name>.yaml` (or `.vmlab/projects/` in
+a repo):
+
+```yaml
+name: dayshape
+path: ~/Projects/dayshape/dayshape   # cwd at/under this auto-selects the profile
+target: win11-ssh                    # any run selector
+flow: ~/Projects/agent-scripts/vmlab/flows/dayshape-win-verify.yaml
+```
+
+Then from inside the repo just run `vmlab verify` — it detects the project from
+the working directory (deepest matching `path:` wins), resolves the target +
+flow, and runs it through the same engine as `vmlab run`. Use `vmlab verify
+<name>` to run it from anywhere, `vmlab verify --list` to see configured
+projects, and `--dry-run` to preview the plan.
 
 Global:
 - `-v` / `--verbose` enables DEBUG slog output for transport + flow steps.
