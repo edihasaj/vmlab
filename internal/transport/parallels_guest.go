@@ -247,18 +247,48 @@ func (p *parallelsGuestTransport) Run(ctx context.Context, t target.Target, cmd 
 }
 
 // winGuestArgv wraps a Windows-guest command so it survives the
-// ssh→prlctl→cmd.exe quoting layers. It builds a PowerShell call pipeline
-// (`& 'arg0' 'arg1' …`) that invokes the original argv verbatim, then ships it
-// through -EncodedCommand so neither cmd.exe nor PowerShell re-parses anything.
-// The trailing `exit $LASTEXITCODE` propagates the wrapped command's real exit
-// code back to the caller (so flows / matrix see true pass/fail).
+// ssh→prlctl→cmd.exe quoting layers AND PowerShell's own native-argument
+// quoting. It ships the payload through -EncodedCommand (UTF-16LE base64) so
+// nothing on the transport hops re-parses it, then launches the target via
+// ProcessStartInfo with a command line we quote ourselves (cmdQuote, i.e.
+// CommandLineToArgvW rules).
+//
+// Why not the obvious `& 'exe' 'arg1' 'arg2'` call operator: Windows PowerShell
+// 5.1 (the default on every Windows guest) does NOT reliably quote arguments
+// that contain spaces when it builds a *native* process's command line, so a
+// payload like `sqlcmd -Q "SELECT a FROM b"` reaches sqlcmd as the separate
+// tokens `SELECT`, `a`, `b`. Building the command line ourselves and handing it
+// to ProcessStartInfo.Arguments (verbatim — .NET does no re-quoting) sidesteps
+// that bug on every PowerShell version. UseShellExecute=$false makes the child
+// inherit our stdio so output streams back through prlctl exec; `exit
+// $p.ExitCode` propagates the real exit code (so flows / matrix see true
+// pass/fail).
 func winGuestArgv(cmd []string) ([]string, error) {
-	ps, err := powershellInvocation(cmd)
-	if err != nil {
-		return nil, err
-	}
-	enc := encodePowerShell(ps + "; exit $LASTEXITCODE")
+	enc := encodePowerShell(winNativeScript(cmd))
 	return []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc}, nil
+}
+
+// winNativeScript builds the PowerShell payload winGuestArgv encodes. It
+// resolves cmd[0] on PATH (so bare names like `sqlcmd`/`git` work, and `.cmd`/
+// `.bat` shims route through cmd.exe which CreateProcess cannot launch
+// directly), then starts it with cmd[1:] quoted via cmdQuote.
+func winNativeScript(cmd []string) string {
+	quoted := make([]string, 0, len(cmd))
+	for _, a := range cmd[1:] {
+		quoted = append(quoted, cmdQuote(a))
+	}
+	argLine := strings.Join(quoted, " ")
+	return "$ErrorActionPreference='Stop'\n" +
+		"$f=" + psSingleQuote(cmd[0]) + "\n" +
+		"$a=" + psSingleQuote(argLine) + "\n" +
+		"$g=Get-Command -Name $f -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +
+		"$exe= if ($g) { $g.Source } else { $f }\n" +
+		"$si=New-Object System.Diagnostics.ProcessStartInfo\n" +
+		"if ($exe -match '\\.(cmd|bat)$') { $si.FileName=$env:ComSpec; $si.Arguments='/c \"\"'+$exe+'\" '+$a+'\"' } else { $si.FileName=$exe; $si.Arguments=$a }\n" +
+		"$si.UseShellExecute=$false\n" +
+		"$p=[System.Diagnostics.Process]::Start($si)\n" +
+		"$p.WaitForExit()\n" +
+		"exit $p.ExitCode"
 }
 
 func (p *parallelsGuestTransport) Shell(ctx context.Context, t target.Target) error {

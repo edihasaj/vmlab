@@ -108,16 +108,27 @@ Examples:
 
 			var loadedFlow *flow.Flow
 			var cmdLine string
+			var rawArgv []string
 			if len(rest) == 1 && flow.LooksLikeFlowPath(rest[0]) {
 				loadedFlow, err = flow.Load(rest[0])
 				if err != nil {
 					return err
 				}
+			} else if len(rest) > 1 {
+				// Multiple tokens are an unambiguous argv (`run <t> -- a b c`).
+				// Pass them through verbatim so quoting/spaces survive the
+				// transport's native argv handling instead of being flattened
+				// into a shell line (which drops the boundaries the user's shell
+				// already resolved). A single token stays a shell line below so
+				// pipes / && / redirection still work.
+				rawArgv = rest
+				cmdLine = strings.Join(rest, " ") // for plan/evidence display only
 			} else {
 				cmdLine = strings.Join(rest, " ")
 			}
 
 			return executeTargetRun(cmd, p, cfg, selectorArg, ts, loadedFlow, cmdLine, runFlags{
+				rawArgv:         rawArgv,
 				maxParallel:     maxParallel,
 				failFast:        failFast,
 				continueOnError: continueOnError,
@@ -151,6 +162,10 @@ type runFlags struct {
 	noEvidence      bool
 	dryRun          bool
 	format          string
+	// rawArgv, when non-empty, is the literal command argv (from a multi-token
+	// `run <target> -- a b c`). It is handed to the transport verbatim instead
+	// of being wrapped as a shell line, so argument boundaries survive.
+	rawArgv []string
 }
 
 // executeTargetRun runs a flow (or shell command) against already-resolved
@@ -209,7 +224,11 @@ func executeTargetRun(cmd *cobra.Command, p config.Paths, cfg config.Config, sel
 				}
 				return 0, nil
 			}
-			res, err := tr.Run(ctx, t, transport.WrapShell(t, cmdLine), teeOut, teeErr)
+			execCmd := transport.WrapShell(t, cmdLine)
+			if len(fl.rawArgv) > 0 {
+				execCmd = fl.rawArgv
+			}
+			res, err := tr.Run(ctx, t, execCmd, teeOut, teeErr)
 			return res.ExitCode, err
 		})
 

@@ -849,7 +849,7 @@ func TestParallelsGuestLocal(t *testing.T) {
 	if strings.Contains(got, "cmd.exe ") {
 		t.Errorf("raw command leaked unencoded (expected EncodedCommand): %s", got)
 	}
-	if payload := encodedPayload(t, got); !strings.Contains(payload, "& 'cmd.exe' '/c' 'ver'") {
+	if payload := encodedPayload(t, got); !strings.Contains(payload, "$f='cmd.exe'") || !strings.Contains(payload, "$a='/c ver'") {
 		t.Errorf("decoded payload missing original argv: %q", payload)
 	}
 }
@@ -927,7 +927,7 @@ func TestParallelsGuestRemoteQuoting(t *testing.T) {
 	if strings.Contains(got, "Get-Date -Format") {
 		t.Errorf("raw command leaked unencoded (expected EncodedCommand): %s", got)
 	}
-	if payload := encodedPayload(t, got); !strings.Contains(payload, "& 'powershell.exe' '-NoProfile' '-Command' 'Get-Date -Format ''o'''") {
+	if payload := encodedPayload(t, got); !strings.Contains(payload, `$a='-NoProfile -Command "Get-Date -Format ''o''"'`) {
 		t.Errorf("decoded payload missing original argv: %q", payload)
 	}
 }

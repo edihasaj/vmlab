@@ -25,7 +25,7 @@ func encodedPayload(t *testing.T, argv string) string {
 // TestWinGuestArgv is the regression guard for the bug where Windows-guest
 // commands run via parallels-guest were shredded by the ssh→prlctl→cmd.exe
 // layers (pipes swallowed, `C:\x` collapsed to `C:x`). winGuestArgv must wrap
-// the argv in a PowerShell -EncodedCommand whose decoded payload invokes the
+// the argv in a PowerShell -EncodedCommand whose decoded payload launches the
 // original argv verbatim — pipes, backslashes and quotes intact.
 func TestWinGuestArgv(t *testing.T) {
 	cmd := []string{"powershell", "-Command", "Get-Content C:\\dayshape\\build.log | Select-String 'error'"}
@@ -45,17 +45,48 @@ func TestWinGuestArgv(t *testing.T) {
 
 	payload := decodePowerShell(t, argv[4])
 
-	// The call operator invokes arg0 with the rest as literal positional args.
-	if !strings.HasPrefix(payload, "& ") {
-		t.Errorf("payload should start with call operator, got %q", payload)
+	// Launch via ProcessStartInfo with our own quoting — the path that
+	// sidesteps PowerShell 5.1's broken native-argument quoting.
+	if !strings.Contains(payload, "System.Diagnostics.ProcessStartInfo") ||
+		!strings.Contains(payload, "$si.UseShellExecute=$false") {
+		t.Errorf("payload should launch via ProcessStartInfo, got %q", payload)
 	}
 	// Exit-code propagation so flows/matrix observe true pass/fail.
-	if !strings.HasSuffix(payload, "; exit $LASTEXITCODE") {
+	if !strings.HasSuffix(payload, "exit $p.ExitCode") {
 		t.Errorf("payload should propagate exit code, got %q", payload)
 	}
-	// The pipe and backslash path must survive verbatim inside the single-quoted
-	// argument — this is exactly what the raw prlctl path destroyed.
-	if !strings.Contains(payload, "Get-Content C:\\dayshape\\build.log | Select-String ''error''") {
+	// The pipe and backslash path must survive verbatim inside the quoted
+	// argument line — this is exactly what the raw prlctl path destroyed. The
+	// arg contains a space + pipe, so cmdQuote wraps it in double quotes; the
+	// embedded single quotes are doubled by psSingleQuote.
+	if !strings.Contains(payload, `"Get-Content C:\dayshape\build.log | Select-String ''error''"`) {
 		t.Errorf("argument not preserved verbatim in payload: %q", payload)
+	}
+}
+
+// TestWinGuestArgvNativeSpacedArg is the regression guard for the specific
+// failure that motivated the ProcessStartInfo rewrite: a single argument that
+// contains spaces (e.g. a SQL query passed to sqlcmd via -Q) must reach the
+// child as ONE argument. With the old `& 'sqlcmd' '-Q' 'SELECT a FROM b'`
+// pattern, Windows PowerShell 5.1 dropped the quoting and sqlcmd saw `SELECT`,
+// `a`, `b` as separate tokens. The fixed payload must carry the query wrapped
+// in double quotes so CommandLineToArgvW keeps it intact.
+func TestWinGuestArgvNativeSpacedArg(t *testing.T) {
+	cmd := []string{"sqlcmd", "-S", "localhost", "-Q", "SELECT a FROM b WHERE x='y'"}
+
+	argv, err := winGuestArgv(cmd)
+	if err != nil {
+		t.Fatalf("winGuestArgv: %v", err)
+	}
+	payload := decodePowerShell(t, argv[len(argv)-1])
+
+	// The spaced query must be one double-quoted token in the command line
+	// (single quotes inside it doubled by psSingleQuote for the PS literal).
+	if !strings.Contains(payload, `-Q "SELECT a FROM b WHERE x=''y''"`) {
+		t.Errorf("spaced -Q argument was not kept as a single quoted token: %q", payload)
+	}
+	// Flag args with no spaces stay bare (no needless quoting).
+	if !strings.Contains(payload, "-S localhost") {
+		t.Errorf("simple args should pass through unquoted: %q", payload)
 	}
 }
