@@ -278,7 +278,11 @@ func winNativeScript(cmd []string) string {
 		quoted = append(quoted, cmdQuote(a))
 	}
 	argLine := strings.Join(quoted, " ")
+	// SilentlyContinue suppresses PowerShell's progress stream ("Preparing
+	// modules for first use…"), which prlctl exec otherwise serializes as
+	// CLIXML <Objs> noise onto the caller's console ahead of real output.
 	return "$ErrorActionPreference='Stop'\n" +
+		"$ProgressPreference='SilentlyContinue'\n" +
 		"$f=" + psSingleQuote(cmd[0]) + "\n" +
 		"$a=" + psSingleQuote(argLine) + "\n" +
 		"$g=Get-Command -Name $f -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1\n" +

@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.5] - 2026-06-25
+## [0.2.6] - 2026-06-26
+
+### Fixed
+
+- `parallels-guest` Windows runs no longer prepend PowerShell CLIXML progress
+  noise (`<Objs>… Preparing modules for first use…`) to the console output. The
+  encoded payload now sets `$ProgressPreference='SilentlyContinue'`, so the
+  caller sees only the command's real stdout (which was already clean in the
+  evidence bundle).
+- `ssh-mac` doctor (and Screenshot/GUI) no longer false-negative with
+  "command not found: guiport" against a Homebrew-installed remote guiport. A
+  non-login ssh command shell skips the user's profile, so `/opt/homebrew/bin`
+  (Apple Silicon) / `/usr/local/bin` (Intel) were off PATH. Every remote
+  guiport invocation now prefixes both Homebrew bin dirs; an absolute `bin`
+  override is left untouched.
 
 ### Added
 

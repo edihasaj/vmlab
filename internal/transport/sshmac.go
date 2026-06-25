@@ -48,6 +48,24 @@ func (s *sshMacTransport) Capabilities() Caps {
 	return Caps{Shell: true, Sync: true, Install: true, Screenshot: true, GUI: true}
 }
 
+// remoteGuiport builds the remote command that runs the far Mac's locally
+// installed guiport with Homebrew's bin dirs on PATH. A non-login ssh command
+// shell does not source the user's profile, so a Homebrew-installed `guiport`
+// (/opt/homebrew/bin on Apple Silicon, /usr/local/bin on Intel) is otherwise
+// "command not found" — a false negative in Doctor and a hard failure for
+// Screenshot/GUI. Skip the prefix when the binary was overridden to an
+// absolute path (the caller already pinned it).
+func (s *sshMacTransport) remoteGuiport(suffix string) string {
+	cmd := s.bin
+	if suffix != "" {
+		cmd += " " + suffix
+	}
+	if strings.HasPrefix(s.bin, "/") {
+		return cmd
+	}
+	return `PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" ` + cmd
+}
+
 func (s *sshMacTransport) Doctor(ctx context.Context, t target.Target) Health {
 	if !haveBinary("ssh") {
 		return Health{OK: false, Message: "ssh not on PATH"}
@@ -58,7 +76,7 @@ func (s *sshMacTransport) Doctor(ctx context.Context, t target.Target) Health {
 	// Probe: remote `guiport doctor`. Captures the same trusted/untrusted
 	// breakdown the local guiport doctor surfaces, so an agent learns
 	// "Accessibility not granted on remote-mac" with a single call.
-	args := append(sshDialArgs(t), s.bin+" doctor")
+	args := append(sshDialArgs(t), s.remoteGuiport("doctor"))
 	var errBuf bytes.Buffer
 	res, err := runExternal(ctx, "ssh", args, io.Discard, &errBuf)
 	if err != nil {
@@ -96,7 +114,7 @@ func (s *sshMacTransport) Screenshot(ctx context.Context, t target.Target, path 
 	}
 	remoteTmp := fmt.Sprintf("/tmp/vmlab-screenshot-%d.png", time.Now().UnixNano())
 	// Capture on the far side.
-	captureArgs := append(sshDialArgs(t), fmt.Sprintf("%s screenshot --out %s", s.bin, shellSingleQuote(remoteTmp)))
+	captureArgs := append(sshDialArgs(t), s.remoteGuiport("screenshot --out "+shellSingleQuote(remoteTmp)))
 	res, err := runExternal(ctx, "ssh", captureArgs, io.Discard, io.Discard)
 	if err != nil {
 		return err
@@ -154,7 +172,7 @@ func (s *sshMacTransport) GUI(ctx context.Context, t target.Target, a GUIAction,
 	if err != nil {
 		return err
 	}
-	args := append(sshDialArgs(t), s.bin+" "+verb)
+	args := append(sshDialArgs(t), s.remoteGuiport(verb))
 	var errBuf bytes.Buffer
 	res, err := runExternal(ctx, "ssh", args, stdout, &errBuf)
 	if err != nil {

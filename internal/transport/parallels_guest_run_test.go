@@ -90,3 +90,18 @@ func TestWinGuestArgvNativeSpacedArg(t *testing.T) {
 		t.Errorf("simple args should pass through unquoted: %q", payload)
 	}
 }
+
+// TestWinGuestArgvSilencesProgress guards the fix for the CLIXML noise that
+// `prlctl exec` surfaced on the caller's console: PowerShell's progress stream
+// ("Preparing modules for first use…") was serialized as <Objs> ahead of the
+// real stdout. The payload must set $ProgressPreference='SilentlyContinue'.
+func TestWinGuestArgvSilencesProgress(t *testing.T) {
+	argv, err := winGuestArgv([]string{"hostname"})
+	if err != nil {
+		t.Fatalf("winGuestArgv: %v", err)
+	}
+	payload := decodePowerShell(t, argv[len(argv)-1])
+	if !strings.Contains(payload, "$ProgressPreference='SilentlyContinue'") {
+		t.Errorf("payload should silence the progress stream, got %q", payload)
+	}
+}
