@@ -12,7 +12,7 @@ builds:
     binary: vmlab
     env:
       - CGO_ENABLED=0
-    goos: [darwin, linux]
+    goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
     ldflags:
       - -s -w
@@ -23,6 +23,10 @@ builds:
 archives:
   - id: default
     formats: [tar.gz]
+    # Windows users expect a .zip (and no tar on a stock box).
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_
       {{- if eq .Os "darwin" }}darwin

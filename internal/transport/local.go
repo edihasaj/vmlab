@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
@@ -66,7 +67,14 @@ func (l *localTransport) Run(ctx context.Context, t target.Target, cmd []string,
 func (l *localTransport) Shell(ctx context.Context, t target.Target) error {
 	sh := os.Getenv("SHELL")
 	if sh == "" {
-		sh = "/bin/sh"
+		if runtime.GOOS == "windows" {
+			// $SHELL is normally unset on Windows; prefer %ComSpec% (cmd.exe).
+			if sh = os.Getenv("ComSpec"); sh == "" {
+				sh = "cmd.exe"
+			}
+		} else {
+			sh = "/bin/sh"
+		}
 	}
 	return shellInteractive(ctx, sh, nil)
 }

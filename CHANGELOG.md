@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-26
+
+### Added
+
+- **Windows host support.** vmlab now compiles, runs, and ships for Windows
+  (amd64 + arm64) — you can drive verify loops from a Windows machine, not just
+  macOS/Linux. Releases now include `vmlab_<ver>_windows_<arch>.zip` alongside
+  the unix tarballs, and `scripts/install.ps1` installs the latest release into
+  `%LOCALAPPDATA%\Programs\vmlab` and onto the user PATH. From a Windows host
+  the `ssh`, `ssh-windows`, and `local` transports work; `parallels-guest` and
+  the macOS GUI transports (`guiport`, `abx`, `ssh-mac`) still require a macOS
+  host. Verified end-to-end (build → run → evidence) inside a Windows guest.
+  - State locking (`internal/state`) is now cross-platform: `flock` on unix,
+    `LockFileEx`/`UnlockFileEx` on Windows (new `golang.org/x/sys` dependency).
+  - Run cancellation (`vmlab attach --signal`, MCP `vmlab_cancel`) moved to a
+    new `internal/proc` package: real `SIGINT`/`SIGTERM`/`SIGKILL` on unix; on
+    Windows every signal force-terminates the process (no POSIX signals), so
+    SIGINT cleanup hooks do not fire there — a documented limitation.
+  - `local` interactive shell falls back to `%ComSpec%` (cmd.exe) on Windows
+    instead of `/bin/sh`.
+
 ## [0.2.6] - 2026-06-26
 
 ### Fixed

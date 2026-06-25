@@ -10,12 +10,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
+	"github.com/edihasaj/vmlab/internal/proc"
 	"github.com/edihasaj/vmlab/internal/provider"
 	_ "github.com/edihasaj/vmlab/internal/provider/all"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -275,18 +274,11 @@ func handleCancel(_ context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallTool
 		}
 		return helperError(err.Error()), nil
 	}
-	sig := syscall.SIGINT
-	switch strings.ToUpper(sigName) {
-	case "", "INT", "SIGINT":
-		sig = syscall.SIGINT
-	case "TERM", "SIGTERM":
-		sig = syscall.SIGTERM
-	case "KILL", "SIGKILL":
-		sig = syscall.SIGKILL
-	default:
-		return helperError(fmt.Sprintf("unknown signal %q", sigName)), nil
+	sig, err := proc.Parse(sigName)
+	if err != nil {
+		return helperError(err.Error()), nil
 	}
-	if err := syscall.Kill(st.PID, sig); err != nil {
+	if err := proc.Send(st.PID, sig); err != nil {
 		return helperError(fmt.Sprintf("kill pid=%d: %v", st.PID, err)), nil
 	}
 	return helperResult(mustJSON(map[string]any{

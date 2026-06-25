@@ -6,11 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/config"
 	"github.com/edihasaj/vmlab/internal/evidence"
+	"github.com/edihasaj/vmlab/internal/proc"
 	"github.com/spf13/cobra"
 )
 
@@ -109,18 +109,11 @@ func newCancelCmd() *cobra.Command {
 				}
 				return err
 			}
-			sig := syscall.SIGINT
-			switch signalName {
-			case "", "INT", "SIGINT":
-				sig = syscall.SIGINT
-			case "TERM", "SIGTERM":
-				sig = syscall.SIGTERM
-			case "KILL", "SIGKILL":
-				sig = syscall.SIGKILL
-			default:
-				return fmt.Errorf("unknown signal %q (use INT|TERM|KILL)", signalName)
+			sig, err := proc.Parse(signalName)
+			if err != nil {
+				return err
 			}
-			if err := syscall.Kill(st.PID, sig); err != nil {
+			if err := proc.Send(st.PID, sig); err != nil {
 				return fmt.Errorf("kill pid=%d: %w", st.PID, err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "sent %s to pid=%d (run %s)\n", sig, st.PID, args[0])

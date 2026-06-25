@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -36,18 +35,19 @@ func Acquire(stateDir, instance string, notify func(holderPID string)) (*Lock, e
 		return nil, fmt.Errorf("open lock %s: %w", path, err)
 	}
 	// Try non-blocking first so we can emit a "waiting for X" notice before
-	// blocking forever.
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if !errors.Is(err, syscall.EWOULDBLOCK) {
+	// blocking forever. The lock primitives are platform-specific (flock on
+	// unix, LockFileEx on Windows) — see lock_unix.go / lock_windows.go.
+	if err := lockExclusiveNB(f); err != nil {
+		if !errors.Is(err, errLockBusy) {
 			f.Close()
-			return nil, fmt.Errorf("flock %s: %w", path, err)
+			return nil, fmt.Errorf("lock %s: %w", path, err)
 		}
 		if notify != nil {
 			notify(readHolder(f))
 		}
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		if err := lockExclusive(f); err != nil {
 			f.Close()
-			return nil, fmt.Errorf("flock %s: %w", path, err)
+			return nil, fmt.Errorf("lock %s: %w", path, err)
 		}
 	}
 	// We now hold the lock. Record our PID + timestamp so a future waiter
@@ -64,7 +64,7 @@ func (l *Lock) Release() error {
 	if l == nil || l.f == nil {
 		return nil
 	}
-	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
+	_ = unlockFile(l.f)
 	err := l.f.Close()
 	l.f = nil
 	return err

@@ -25,7 +25,14 @@ Homebrew tap (macOS/Linux):
 brew install edihasaj/tap/vmlab
 ```
 
-`go install` (Go ≥1.24):
+Windows (PowerShell) — installs the latest release `.zip` into
+`%LOCALAPPDATA%\Programs\vmlab` and adds it to your user PATH:
+
+```powershell
+irm https://raw.githubusercontent.com/edihasaj/vmlab/main/scripts/install.ps1 | iex
+```
+
+`go install` (Go ≥1.24, any OS):
 
 ```sh
 go install github.com/edihasaj/vmlab/cmd/vmlab@latest
@@ -39,8 +46,15 @@ make install                          # → $GOPATH/bin/vmlab
 PREFIX=$HOME/.local make install      # → $HOME/.local/bin/vmlab
 ```
 
-Pre-built binaries (darwin/linux × amd64/arm64) ship on every tagged
-release — grab a tarball from [GitHub Releases](https://github.com/edihasaj/vmlab/releases).
+Pre-built binaries (darwin/linux × amd64/arm64 as `.tar.gz`, windows ×
+amd64/arm64 as `.zip`) ship on every tagged release — grab one from
+[GitHub Releases](https://github.com/edihasaj/vmlab/releases).
+
+**Host support:** vmlab runs as the driver on **macOS, Linux, and Windows**.
+From a Windows host you can drive `ssh` (Linux), `ssh-windows`, and `local`
+targets; `parallels-guest` and the macOS GUI transports (`guiport`, `abx`,
+`ssh-mac`) require a macOS host. Cancelling a run on Windows force-terminates
+the process (no POSIX signals), so SIGINT cleanup hooks do not fire there.
 
 ## Quickstart
 
