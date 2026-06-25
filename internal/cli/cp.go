@@ -25,9 +25,13 @@ func newCpCmd() *cobra.Command {
 		Short: "Copy a local file into a guest (host→guest), no shared folder needed",
 		Long: `Copy a host file into the guest filesystem.
 
-The file is base64-encoded and reconstructed on the guest in chunks, so it
+The file is base64-encoded and reconstructed on the guest in small chunks, so it
 survives the transport's quoting layers and needs no shared folder. Works on
 windows guests (rebuilt via PowerShell) and posix guests (via base64).
+
+Best for scripts/configs. Large files mean many round-trips (each a cold guest
+shell) and can hit the prlctl argument-size limit — use a shared folder (sync)
+for those instead.
 
 Use forward slashes for windows remote paths (e.g. C:/Users/me/script.ps1) —
 they are valid in .NET/PowerShell and avoid host-shell backslash mangling.`,
@@ -57,12 +61,15 @@ they are valid in .NET/PowerShell and avoid host-shell backslash mangling.`,
 // decoded into the destination and the temp removed.
 func pushFileToGuest(ctx context.Context, tr transport.Transport, t target.Target, data []byte, remotePath string) error {
 	b64 := base64.StdEncoding.EncodeToString(data)
-	// Each chunk becomes one guest command; after UTF-16LE + base64 re-encoding
-	// for the Windows -EncodedCommand hop a chunk this size stays well under the
-	// ~32k command-line limit, while keeping round-trips (each a cold guest
-	// shell, the dominant cost) low. Large files are still slower the more
-	// chunks they need.
-	const chunkSize = 8000
+	// Each chunk becomes one guest command. For the parallels-guest transport
+	// the chunk is wrapped again (UTF-16LE + base64) for PowerShell
+	// -EncodedCommand and handed to `prlctl exec`, which rejects over-long
+	// argument strings (PrlResult_GetParamByIndex: Invalid argument) well below
+	// the Windows 32k command-line limit. Keep chunks small so every hop stays
+	// under that prlctl ceiling; the cost is more round-trips (each a cold guest
+	// shell) for large files. This is aimed at scripts/configs — for big files a
+	// shared folder (`sync`) is the better tool.
+	const chunkSize = 800
 	windows := t.OSKind() == "windows"
 	tmp := remotePath + ".vmlabcp"
 
