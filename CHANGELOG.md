@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-06-25
+
+### Added
+
+- `vmlab cp <target> <local> <remote>` — first-class host→guest file copy.
+  Unlike `sync` (which relies on host-side Parallels shared folders that live
+  on the Mac owning the VM), `cp` base64-encodes the file and reconstructs it
+  on the guest in chunks under the transport command-line limits — Windows
+  guests via PowerShell `WriteAllBytes`, POSIX via `base64 -d`. Aimed at
+  one-off scripts/configs; large files should still go via a shared folder.
+
+### Fixed
+
+- `vmlab run <win-target> -- <cmd>` was unusable for any command with a
+  space-bearing argument (e.g. `sqlcmd -Q "SELECT a FROM b"`). `run` flattened
+  the post-`--` argv with a join and re-wrapped it as `cmd.exe /c <line>`,
+  dropping the boundaries the shell had resolved; and `winGuestArgv` built
+  `& 'exe' 'arg'…`, which Windows PowerShell 5.1 re-split. Multi-token commands
+  now pass through as raw argv and launch via `ProcessStartInfo` with a command
+  line quoted to `CommandLineToArgvW` rules; single tokens stay a shell line so
+  pipes / `&&` / redirection still work.
+- `vmlab cp` chunk size dropped from 8000 to 800 chars: `prlctl exec` rejects
+  over-long argument strings (`Invalid argument`) well under the 32k Windows
+  limit, which broke `cp` for files larger than ~2KB on parallels-guest.
+
 ## [0.2.4] - 2026-06-24
 
 ### Added
