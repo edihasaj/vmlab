@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-29
+
+### Fixed
+
+- `vmlab gui <target>` now accepts every GUI-capable transport instead of
+  hard-requiring `transport: guiport`. This makes remote macOS targets using
+  `transport: ssh-mac` work for `hotkey`, `type`, `observe`, and other GUI
+  verbs through the remote `guiport` binary.
+- `ssh-mac` doctor now surfaces the useful failing `guiport doctor` line
+  (for example `screen_recording: not granted`) instead of a generic exit code.
+
+### Added
+
+- `docs/transports/ssh-mac.md` documents the remote macOS hotkey/automation
+  path and the required TCC grants.
+
 ## [0.3.1] - 2026-06-29
 
 ### Added

@@ -77,19 +77,33 @@ func (s *sshMacTransport) Doctor(ctx context.Context, t target.Target) Health {
 	// breakdown the local guiport doctor surfaces, so an agent learns
 	// "Accessibility not granted on remote-mac" with a single call.
 	args := append(sshDialArgs(t), s.remoteGuiport("doctor"))
-	var errBuf bytes.Buffer
-	res, err := runExternal(ctx, "ssh", args, io.Discard, &errBuf)
+	var outBuf, errBuf bytes.Buffer
+	res, err := runExternal(ctx, "ssh", args, &outBuf, &errBuf)
 	if err != nil {
 		return Health{OK: false, Message: err.Error()}
 	}
 	if res.ExitCode != 0 {
-		msg := firstLine(strings.TrimSpace(errBuf.String()))
-		if msg == "" {
-			msg = fmt.Sprintf("guiport doctor exit=%d", res.ExitCode)
-		}
+		msg := sshMacDoctorFailureMessage(errBuf.String(), outBuf.String(), res.ExitCode)
 		return Health{OK: false, Message: "ssh-mac: " + msg}
 	}
 	return Health{OK: true, Message: "ssh-mac reachable; guiport ok"}
+}
+
+func sshMacDoctorFailureMessage(stderr, stdout string, exitCode int) string {
+	combined := strings.TrimSpace(stderr)
+	if combined == "" {
+		combined = strings.TrimSpace(stdout)
+	}
+	for _, line := range strings.Split(combined, "\n") {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "not granted") || strings.Contains(lower, "not trusted") || strings.Contains(lower, "not ready") {
+			return strings.TrimSpace(line)
+		}
+	}
+	if msg := firstLine(combined); msg != "" {
+		return msg
+	}
+	return fmt.Sprintf("guiport doctor exit=%d", exitCode)
 }
 
 func (s *sshMacTransport) Run(ctx context.Context, t target.Target, cmd []string, stdout, stderr io.Writer) (Result, error) {

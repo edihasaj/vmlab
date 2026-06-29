@@ -490,6 +490,30 @@ func TestSSHMacDoctorProbesRemoteGuiport(t *testing.T) {
 	}
 }
 
+func TestSSHMacDoctorReportsStdoutFailure(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "ssh.args")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+printf 'guiport 0.1.35\n  accessibility: trusted\n  screen_recording: not granted\n'
+exit 1
+`, argsFile)
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewSSHMac()
+	tgt := target.Target{Settings: map[string]any{"ssh": map[string]any{"host": "mac.lan"}}}
+	h := tr.Doctor(context.Background(), tgt)
+	if h.OK {
+		t.Fatalf("doctor expected unhealthy")
+	}
+	if !strings.Contains(h.Message, "screen_recording: not granted") {
+		t.Fatalf("expected stdout failure detail, got %q", h.Message)
+	}
+}
+
 func TestSSHWaylandBackendRoutesToWtype(t *testing.T) {
 	dir := t.TempDir()
 	args := stubBinary(t, dir, "ssh", 0)

@@ -57,9 +57,12 @@ func newGUICmd() *cobra.Command {
 		Short: "Run a guiport-style desktop UI action",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			t, tr, err := lookupTarget(args[0], "guiport")
+			t, tr, err := lookupTargetAny(args[0])
 			if err != nil {
 				return err
+			}
+			if !tr.Capabilities().GUI {
+				return fmt.Errorf("target %s uses transport %q, which does not support gui actions", t.Name, t.Transport)
 			}
 			a := transport.GUIAction{Kind: kind, Selector: selector, Text: text, Path: path}
 			if a.Kind == "" {
