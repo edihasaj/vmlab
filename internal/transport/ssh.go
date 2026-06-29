@@ -68,6 +68,7 @@ func (s *sshTransport) Sync(ctx context.Context, t target.Target, src string) er
 	// fall back to scp.
 	if haveBinary("rsync") {
 		rsh := "ssh -o BatchMode=yes -o StrictHostKeyChecking=" + sshStrict(t)
+		rsh += sshMultiplexOptionString(t)
 		if id := t.SettingString("ssh", "identity"); id != "" {
 			rsh += " -i " + id + " -o IdentitiesOnly=yes"
 		}
@@ -676,6 +677,7 @@ func sshDialArgs(t target.Target) []string {
 		"-o", "RequestTTY=no",
 		"-o", "StrictHostKeyChecking=" + strict,
 	}
+	args = append(args, sshMultiplexArgs(t)...)
 	if kh := t.SettingString("ssh", "knownHosts"); kh != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+kh)
 	}

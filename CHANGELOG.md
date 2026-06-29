@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-29
+
+### Added
+
+- **SSH connection multiplexing (default on).** The `ssh`, `ssh-mac`, and
+  `ssh-windows` transports now reuse a single OpenSSH ControlMaster socket
+  (under `~/.vmlab/cm/`, or `$VMLAB_HOME/cm`) instead of doing a full TCP+SSH
+  handshake on every `run`/`cp`/`doctor`. The first connection warms the master;
+  subsequent calls ride it as a new channel — cutting per-call latency ~4–5×
+  (measured ~1.6s → ~0.34s against a Tailscale Windows box), and sidestepping
+  slow/throttled new-connection setup entirely. It is the transport-layer
+  analogue of keeping one browser/CDP session warm. Opt out per target with
+  `ssh.multiplex: false`; tune the idle lifetime with `ssh.controlPersist`
+  (default `10m`).
+
 ## [0.3.0] - 2026-06-26
 
 ### Added

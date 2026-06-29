@@ -125,6 +125,7 @@ func (s *sshWindowsTransport) Sync(ctx context.Context, t target.Target, src str
 	}
 	if haveBinary("rsync") {
 		rsh := "ssh -o BatchMode=yes -o StrictHostKeyChecking=" + winSSHStrict(t)
+		rsh += sshMultiplexOptionString(t)
 		if id := t.SettingString("ssh", "identity"); id != "" {
 			rsh += " -i " + id + " -o IdentitiesOnly=yes"
 		}
@@ -145,6 +146,7 @@ func (s *sshWindowsTransport) Sync(ctx context.Context, t target.Target, src str
 		return fmt.Errorf("ssh-windows: neither rsync nor scp on PATH")
 	}
 	args := []string{"-q"}
+	args = append(args, sshMultiplexArgs(t)...)
 	if id := t.SettingString("ssh", "identity"); id != "" {
 		args = append(args, "-i", id)
 	}
@@ -491,6 +493,7 @@ func winSSHDialArgs(t target.Target, interactive bool) []string {
 		"-o", "RequestTTY=" + tty,
 		"-o", "StrictHostKeyChecking=" + winSSHStrict(t),
 	}
+	args = append(args, sshMultiplexArgs(t)...)
 	if kh := t.SettingString("ssh", "knownHosts"); kh != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+kh)
 	}
