@@ -124,10 +124,10 @@ So you don't have to remember which flow/target pairs with which repo, save a
 a repo):
 
 ```yaml
-name: dayshape
-path: ~/Projects/dayshape/dayshape   # cwd at/under this auto-selects the profile
+name: acme
+path: ~/Projects/acme/acme   # cwd at/under this auto-selects the profile
 target: win11-ssh                    # any run selector
-flow: ~/Projects/agent-scripts/vmlab/flows/dayshape-win-verify.yaml
+flow: ~/Projects/agent-scripts/vmlab/flows/acme-win-verify.yaml
 ```
 
 Then from inside the repo just run `vmlab verify` — it detects the project from

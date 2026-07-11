@@ -31,17 +31,17 @@ don't have to remember which flow/target pairs with which repo.
 
 Profiles live in ~/.vmlab/projects/<name>.yaml (or .vmlab/projects/ in a repo):
 
-  name: dayshape
-  path: ~/Projects/dayshape/dayshape   # cwd at/under this auto-selects it
+  name: acme
+  path: ~/Projects/acme/acme   # cwd at/under this auto-selects it
   target: win11-ssh                    # any run selector
-  flow: ~/Projects/agent-scripts/vmlab/flows/dayshape-win-verify.yaml
+  flow: ~/Projects/agent-scripts/vmlab/flows/acme-win-verify.yaml
 
 Resolution: an explicit [project] name wins; otherwise the profile whose path
 is the deepest ancestor of the working directory is used.
 
 Examples:
   vmlab verify                 # auto-detect from the current directory
-  vmlab verify dayshape        # by name, from anywhere
+  vmlab verify acme        # by name, from anywhere
   vmlab verify --list          # show configured projects
   vmlab verify --dry-run`,
 		Args: cobra.MaximumNArgs(1),

@@ -45,8 +45,8 @@ func TestWrapForExec_WindowsPwshUsesEnvAndSetLocation(t *testing.T) {
 		Transport: "ssh-windows",
 		Settings:  map[string]any{"ssh": map[string]any{"shell": "pwsh"}},
 	}
-	got := wrapForExec(tgt, "dotnet test", `C:\dayshape`, map[string]string{"CFG": "Debug"})
-	want := `$env:CFG='Debug'; Set-Location -LiteralPath 'C:\dayshape'; dotnet test`
+	got := wrapForExec(tgt, "dotnet test", `C:\proj`, map[string]string{"CFG": "Debug"})
+	want := `$env:CFG='Debug'; Set-Location -LiteralPath 'C:\proj'; dotnet test`
 	if got != want {
 		t.Fatalf("windows pwsh wrap mismatch\n got: %q\nwant: %q", got, want)
 	}

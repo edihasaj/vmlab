@@ -28,7 +28,7 @@ func encodedPayload(t *testing.T, argv string) string {
 // the argv in a PowerShell -EncodedCommand whose decoded payload launches the
 // original argv verbatim — pipes, backslashes and quotes intact.
 func TestWinGuestArgv(t *testing.T) {
-	cmd := []string{"powershell", "-Command", "Get-Content C:\\dayshape\\build.log | Select-String 'error'"}
+	cmd := []string{"powershell", "-Command", "Get-Content C:\\proj\\build.log | Select-String 'error'"}
 
 	argv, err := winGuestArgv(cmd)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestWinGuestArgv(t *testing.T) {
 	// argument line — this is exactly what the raw prlctl path destroyed. The
 	// arg contains a space + pipe, so cmdQuote wraps it in double quotes; the
 	// embedded single quotes are doubled by psSingleQuote.
-	if !strings.Contains(payload, `"Get-Content C:\dayshape\build.log | Select-String ''error''"`) {
+	if !strings.Contains(payload, `"Get-Content C:\proj\build.log | Select-String ''error''"`) {
 		t.Errorf("argument not preserved verbatim in payload: %q", payload)
 	}
 }
