@@ -105,3 +105,33 @@ func TestWinGuestArgvSilencesProgress(t *testing.T) {
 		t.Errorf("payload should silence the progress stream, got %q", payload)
 	}
 }
+
+// TestWinuiScriptClickAt guards the click-at kind added for WebView2 surfaces
+// (Teams/Electron/browser) where UIA InvokePattern is unreliable — it must
+// emit a raw SetCursorPos + mouse_event at the requested coords.
+func TestWinuiScriptClickAt(t *testing.T) {
+	script, err := winuiScript(GUIAction{Kind: "click-at", Extra: map[string]any{"x": 640, "y": 512}})
+	if err != nil {
+		t.Fatalf("winuiScript click-at: %v", err)
+	}
+	for _, want := range []string{"SetCursorPos(640, 512)", "mouse_event(0x2", "mouse_event(0x4"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("click-at script missing %q\n%s", want, script)
+		}
+	}
+}
+
+// TestWinuiScriptTreeFlatDump guards that tree roots at the foreground window
+// and enumerates named descendants (a depth-limited walker misses deep
+// WebView2 content).
+func TestWinuiScriptTreeFlatDump(t *testing.T) {
+	script, err := winuiScript(GUIAction{Kind: "tree"})
+	if err != nil {
+		t.Fatalf("winuiScript tree: %v", err)
+	}
+	for _, want := range []string{"GetForegroundWindow", "FromHandle", "TreeScope]::Descendants"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("tree script missing %q", want)
+		}
+	}
+}

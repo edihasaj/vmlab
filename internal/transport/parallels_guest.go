@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,7 @@ func NewParallelsGuest() Transport { return &parallelsGuestTransport{bin: "ssh"}
 func (p *parallelsGuestTransport) Name() string { return "parallels-guest" }
 
 func (p *parallelsGuestTransport) Capabilities() Caps {
-	return Caps{Shell: false, Sync: true, Install: false, Screenshot: true}
+	return Caps{Shell: false, Sync: true, Install: false, Screenshot: true, GUI: true}
 }
 
 func (p *parallelsGuestTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -366,6 +367,8 @@ func (p *parallelsGuestTransport) Screenshot(ctx context.Context, t target.Targe
 //     pulls it back to the host path via prlctl-shared-folder scp fallback.
 //   - click      — finds an element by AutomationId or Name and invokes it
 //     via the UIA InvokePattern (falls back to mouse coords if needed).
+//   - click-at   — raw-coordinate left click; the reliable path for WebView2
+//     (Teams/Electron/browser) inner controls that UIA can't invoke.
 //   - click-text — clicks the first element whose Name contains the text.
 //   - type       — types into the currently focused element via SendKeys.
 //   - hotkey     — sends a SendKeys chord (e.g. "^c" for Ctrl+C, "%{F4}").
@@ -376,6 +379,13 @@ func (p *parallelsGuestTransport) Screenshot(ctx context.Context, t target.Targe
 //
 // The script is delivered via PowerShell -EncodedCommand so embedded
 // quotes survive the ssh→prlctl→cmd.exe layered quoting.
+//
+// Session note: `prlctl exec` runs in Session 0 (SYSTEM), which cannot inject
+// input into — or read the live UIA tree of — the interactive Session 1
+// desktop. Targets that set `parallels.guiSession: interactive` route input
+// and readback through a one-shot scheduled task run `/ru INTERACTIVE /it`, so
+// keystrokes/clicks land on the real desktop (required for Teams, browsers,
+// any WebView2/Electron app).
 func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
 	if a.Kind == "wait" {
 		ms := extraInt(a.Extra, "milliseconds")
@@ -407,6 +417,18 @@ func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GU
 	if err != nil {
 		return err
 	}
+
+	// `prlctl exec` lands in Session 0 (SYSTEM), which cannot inject input
+	// into — or read the live UIA tree of — the interactive Session 1
+	// desktop. So SendKeys/mouse_event no-op against real apps (Teams,
+	// browsers, anything WebView2). Targets that declare
+	// `parallels.guiSession: interactive` route the payload through a
+	// one-shot scheduled task run `/ru INTERACTIVE /it`, which executes in
+	// the logged-in user's session and actually drives the desktop.
+	if strings.EqualFold(t.SettingString("parallels", "guiSession"), "interactive") {
+		return p.runInteractiveGUI(ctx, t, a, script, stdout)
+	}
+
 	// Encode the PowerShell payload as UTF-16LE base64 (the -EncodedCommand
 	// contract) to sidestep ssh→prlctl→cmd→powershell quoting.
 	encoded := encodePowerShell(script)
@@ -433,6 +455,166 @@ func (p *parallelsGuestTransport) GUI(ctx context.Context, t target.Target, a GU
 		return fmt.Errorf("parallels-guest gui %s exited %d", a.Kind, res.ExitCode)
 	}
 	return nil
+}
+
+// Guest-side files the interactive GUI runner uses. Fixed paths under the
+// world-writable Public profile so both Session 0 (bootstrap) and Session 1
+// (the scheduled task) can reach them.
+const (
+	iguiScript = `C:\Users\Public\vmlab-gui.ps1`
+	iguiTask   = `C:\Users\Public\vmlab-gui-task.cmd`
+	iguiOut    = `C:\Users\Public\vmlab-gui-out.txt`
+	iguiDone   = `C:\Users\Public\vmlab-gui-done.txt`
+	iguiName   = "vmlabGui"
+)
+
+// runInteractiveGUI executes a winuiScript payload in the guest's interactive
+// user session (Session 1) via a one-shot scheduled task, then polls for the
+// completion marker and streams any captured output (observe/tree JSON) back
+// to stdout. It uses only `prlctl exec` (Session 0) round-trips — no SSH or
+// shared folder needed.
+func (p *parallelsGuestTransport) runInteractiveGUI(ctx context.Context, t target.Target, a GUIAction, payload string, stdout io.Writer) error {
+	// Wrapper (runs in Session 1): run the payload, redirect ALL its streams
+	// to the out file, and always drop a done marker so the poller unblocks.
+	wrapper := "$ErrorActionPreference='Stop'\r\n" +
+		"try {\r\n" +
+		"  & {\r\n" + payload + "\r\n  } *> '" + iguiOut + "'\r\n" +
+		"  'OK' | Set-Content -LiteralPath '" + iguiDone + "' -Encoding ascii\r\n" +
+		"} catch {\r\n" +
+		"  \"ERR: $_\" | Out-File -FilePath '" + iguiOut + "' -Encoding utf8\r\n" +
+		"  'ERR' | Set-Content -LiteralPath '" + iguiDone + "' -Encoding ascii\r\n" +
+		"}\r\n"
+
+	// The task .cmd: create + fire the interactive one-shot. Kept in a file
+	// (not inline) because schtasks' /tr quoting is brittle through the exec
+	// hops — a fixed-content file sidesteps it entirely.
+	// -WindowStyle Hidden so the task's own powershell never becomes the
+	// foreground window and steals focus from the app we're driving — keys
+	// would otherwise land on the console instead of (e.g.) the Teams
+	// compose box. A Task Scheduler process started hidden leaves the prior
+	// foreground window focused.
+	taskCmd := `schtasks /create /tn ` + iguiName +
+		` /tr "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ` + iguiScript + `"` +
+		` /sc once /st 23:59 /ru INTERACTIVE /it /f` + "\r\n" +
+		`schtasks /run /tn ` + iguiName + "\r\n"
+
+	// Ship both files in via chunked base64 writes. A single giant
+	// -EncodedCommand carrying the whole payload trips prlctl exec's
+	// argument-size ceiling (silent no-op), so we stay well under it — same
+	// constraint `vmlab cp` documents.
+	if err := p.writeGuestFile(ctx, t, iguiScript, []byte(wrapper)); err != nil {
+		return fmt.Errorf("parallels-guest gui %s: write guest script: %w", a.Kind, err)
+	}
+	if err := p.writeGuestFile(ctx, t, iguiTask, []byte(taskCmd)); err != nil {
+		return fmt.Errorf("parallels-guest gui %s: write guest task: %w", a.Kind, err)
+	}
+
+	// Bootstrap (Session 0): clear stale markers, fire the interactive task.
+	bootstrap := "$ErrorActionPreference='Stop'\r\n" +
+		"Remove-Item -LiteralPath '" + iguiOut + "','" + iguiDone + "' -ErrorAction SilentlyContinue\r\n" +
+		"cmd /c '" + iguiTask + "'\r\n"
+
+	if _, err := p.runGuestPS(ctx, t, bootstrap, io.Discard); err != nil {
+		return fmt.Errorf("parallels-guest gui %s: launch interactive task: %w", a.Kind, err)
+	}
+
+	// Poll for the done marker. Interactive input kinds finish in <1s; give a
+	// generous ceiling for slower payloads (open-url launches, tree dumps).
+	deadline := 90 * time.Second
+	if d := extraInt(a.Extra, "timeoutMs"); d > 0 {
+		deadline = time.Duration(d) * time.Millisecond
+	}
+	poll := time.NewTicker(700 * time.Millisecond)
+	defer poll.Stop()
+	timeout := time.After(deadline)
+	var status string
+	for status == "" {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return fmt.Errorf("parallels-guest gui %s: interactive task did not complete within %s", a.Kind, deadline)
+		case <-poll.C:
+			var buf strings.Builder
+			if _, err := p.runGuestPS(ctx, t,
+				"if (Test-Path -LiteralPath '"+iguiDone+"') { Get-Content -LiteralPath '"+iguiDone+"' -Raw }", &buf); err != nil {
+				return fmt.Errorf("parallels-guest gui %s: poll: %w", a.Kind, err)
+			}
+			status = strings.TrimSpace(buf.String())
+		}
+	}
+
+	// Stream captured output (observe/tree emit JSON/text here) to stdout.
+	var out strings.Builder
+	if _, err := p.runGuestPS(ctx, t,
+		"if (Test-Path -LiteralPath '"+iguiOut+"') { Get-Content -LiteralPath '"+iguiOut+"' -Raw }", &out); err != nil {
+		return fmt.Errorf("parallels-guest gui %s: read output: %w", a.Kind, err)
+	}
+	if strings.HasPrefix(status, "ERR") {
+		return fmt.Errorf("parallels-guest gui %s failed in guest: %s", a.Kind, strings.TrimSpace(out.String()))
+	}
+	if s := out.String(); s != "" {
+		_, _ = io.WriteString(stdout, s)
+	}
+	return nil
+}
+
+// writeGuestFile reconstructs data at remotePath inside the guest by streaming
+// it as base64 in small chunks (one prlctl exec per chunk), then decoding it
+// there. Mirrors the cli `cp` file push but at transport level so the GUI
+// runner can stage scripts without a shared folder. Chunk size stays well
+// under prlctl exec's argument ceiling.
+func (p *parallelsGuestTransport) writeGuestFile(ctx context.Context, t target.Target, remotePath string, data []byte) error {
+	const chunkSize = 800
+	b64 := base64.StdEncoding.EncodeToString(data)
+	tmp := remotePath + ".vmlabgui"
+	first := true
+	for i := 0; i < len(b64); i += chunkSize {
+		end := i + chunkSize
+		if end > len(b64) {
+			end = len(b64)
+		}
+		cmdlet := "Add-Content"
+		if first {
+			cmdlet = "Set-Content" // truncate any stale temp on the first chunk
+		}
+		script := cmdlet + " -LiteralPath '" + tmp + "' -Value '" + b64[i:end] + "' -NoNewline"
+		if _, err := p.runGuestPS(ctx, t, script, io.Discard); err != nil {
+			return err
+		}
+		first = false
+	}
+	if first {
+		_, err := p.runGuestPS(ctx, t, "Set-Content -LiteralPath '"+remotePath+"' -Value '' -NoNewline", io.Discard)
+		return err
+	}
+	decode := "[IO.File]::WriteAllBytes('" + remotePath + "',[Convert]::FromBase64String((Get-Content -Raw -LiteralPath '" + tmp + "'))); Remove-Item -LiteralPath '" + tmp + "'"
+	_, err := p.runGuestPS(ctx, t, decode, io.Discard)
+	return err
+}
+
+// runGuestPS runs a PowerShell script in the guest via `prlctl exec` (Session
+// 0), delivered as -EncodedCommand so quoting survives the ssh→prlctl→cmd
+// hops. Captures stdout into the supplied writer.
+func (p *parallelsGuestTransport) runGuestPS(ctx context.Context, t target.Target, script string, stdout io.Writer) (Result, error) {
+	vm := t.SettingString("parallels", "vm")
+	if vm == "" {
+		return Result{}, fmt.Errorf("parallels-guest: parallels.vm is required")
+	}
+	argv := []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script)}
+	args, err := prlctlArgs(t, append([]string{"exec", vm}, argv...))
+	if err != nil {
+		return Result{}, err
+	}
+	var errb strings.Builder
+	res, err := runExternal(ctx, args[0], args[1:], stdout, &errb)
+	if err != nil {
+		return res, err
+	}
+	if res.ExitCode != 0 {
+		return res, fmt.Errorf("guest powershell exit=%d: %s", res.ExitCode, strings.TrimSpace(errb.String()))
+	}
+	return res, nil
 }
 
 // winuiScript returns the PowerShell payload that performs the requested
@@ -470,6 +652,18 @@ if ($el.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$
   Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);' -Name U32 -Namespace W
   [W.U32]::mouse_event(0x2, 0, 0, 0, 0); [W.U32]::mouse_event(0x4, 0, 0, 0, 0)
 }`, a.Selector, a.Selector), nil
+	case "click-at":
+		// Raw-coordinate left click. Essential for WebView2 surfaces (Teams,
+		// Electron, browsers) whose inner controls don't expose reliable UIA
+		// InvokePattern — falling back to a physical click at x,y is the only
+		// thing that lands. Coords are absolute virtual-desktop pixels.
+		x := extraInt(a.Extra, "x")
+		y := extraInt(a.Extra, "y")
+		return prelude + fmt.Sprintf(`Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern bool SetCursorPos(int X, int Y);[DllImport("user32.dll")]public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);' -Name U32 -Namespace W -PassThru | Out-Null
+[W.U32]::SetCursorPos(%d, %d)
+Start-Sleep -Milliseconds 120
+[W.U32]::mouse_event(0x2, 0, 0, 0, 0)
+[W.U32]::mouse_event(0x4, 0, 0, 0, 0)`, x, y), nil
 	case "click-text":
 		if a.Text == "" {
 			return "", fmt.Errorf("parallels-guest gui click-text requires text")
@@ -525,17 +719,28 @@ if (-not $fg) { $fg = [Windows.Automation.AutomationElement]::RootElement }
 $p = $fg.Current
 [pscustomobject]@{name=$p.Name; class=$p.ClassName; type=$p.ControlType.ProgrammaticName; id=$p.AutomationId; rect="$($p.BoundingRectangle)"} | ConvertTo-Json`, nil
 	case "tree":
-		return prelude + `$root = [Windows.Automation.AutomationElement]::FocusedElement
+		// Root at the foreground WINDOW (not just the focused element) so the
+		// dump captures the whole app surface — the conversation/message list,
+		// not only the control that happens to have keyboard focus. Falls back
+		// to focused element, then the desktop root.
+		return prelude + `Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern System.IntPtr GetForegroundWindow();' -Name FG -Namespace W -PassThru | Out-Null
+$h = [W.FG]::GetForegroundWindow()
+$root = $null
+if ($h -ne [System.IntPtr]::Zero) { $root = [Windows.Automation.AutomationElement]::FromHandle($h) }
+if (-not $root) { $root = [Windows.Automation.AutomationElement]::FocusedElement }
 if (-not $root) { $root = [Windows.Automation.AutomationElement]::RootElement }
-function Dump-Tree($el, $depth) {
-  if ($depth -gt 4) { return }
-  $p = $el.Current
-  ("  " * $depth) + "$($p.ControlType.ProgrammaticName) name=$($p.Name) id=$($p.AutomationId)" | Write-Output
-  $walker = [Windows.Automation.TreeWalker]::ControlViewWalker
-  $child = $walker.GetFirstChild($el)
-  while ($child) { Dump-Tree $child ($depth + 1); $child = $walker.GetNextSibling($child) }
-}
-Dump-Tree $root 0`, nil
+# Flat descendants dump: a depth-limited TreeWalker prunes before reaching
+# deep WebView2/Electron content (Teams message text lives many levels down),
+# so instead enumerate ALL named descendants. Capped to keep output bounded.
+$all = $root.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+$n = 0
+foreach ($e in $all) {
+  $c = $e.Current
+  if ([string]::IsNullOrWhiteSpace($c.Name)) { continue }
+  "[$($c.ControlType.ProgrammaticName.Replace('ControlType.',''))] $($c.Name)" | Write-Output
+  $n++
+  if ($n -ge 600) { break }
+}`, nil
 	case "open-url":
 		url := a.Path
 		if url == "" {
