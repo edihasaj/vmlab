@@ -123,6 +123,24 @@ exit 0`)
 	}
 }
 
+func TestUpAdoptModeRefusesCreate(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := stubAz(t, dir, `case "$*" in
+  *"vm show"*) echo "ResourceNotFound: not found"; exit 3 ;;
+  *) echo '{}' ;;
+esac
+exit 0`)
+	withPath(t, dir)
+
+	_, _, err := New().Up(context.Background(), instance("adopted", map[string]any{"create": "false"}))
+	if err == nil || !strings.Contains(err.Error(), "adopt-existing") {
+		t.Fatalf("expected adopt-existing refusal, got: %v", err)
+	}
+	if got, _ := os.ReadFile(argsFile); strings.Contains(string(got), "vm create") {
+		t.Errorf("must NOT call vm create in adopt mode:\n%s", got)
+	}
+}
+
 func TestDownDeallocateSuspendCallsCorrectVerb(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := stubAz(t, dir, `case "$*" in
@@ -193,7 +211,7 @@ func TestDoctorMissingResourceGroupFails(t *testing.T) {
 	}
 }
 
-func TestSubscriptionFlagPrepended(t *testing.T) {
+func TestSubscriptionFlagAppended(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := stubAz(t, dir, `exit 0`)
 	withPath(t, dir)
@@ -201,9 +219,21 @@ func TestSubscriptionFlagPrepended(t *testing.T) {
 	_, _ = New().run(context.Background(),
 		instance("smoke", map[string]any{"subscription": "sub-A"}),
 		"vm", "show", "-g", "rg", "-n", "smoke")
-	got, _ := os.ReadFile(argsFile)
-	first := strings.SplitN(strings.TrimSpace(string(got)), " ", 4)
-	if len(first) < 3 || first[0] != "--subscription" || first[1] != "sub-A" {
-		t.Fatalf("subscription flag not prepended: %q", got)
+	// az rejects a global-position --subscription; it must trail the command.
+	got := strings.TrimSpace(string(mustRead(t, argsFile)))
+	if !strings.HasSuffix(got, "--subscription sub-A") {
+		t.Fatalf("subscription flag not appended: %q", got)
 	}
+	if strings.HasPrefix(got, "--subscription") {
+		t.Fatalf("subscription flag must not be prepended (global position fails): %q", got)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return b
 }

@@ -97,6 +97,14 @@ func (p *Provider) Up(ctx context.Context, i provider.Instance) (target.Target, 
 	case provider.StateRunning, provider.StateStarting:
 		res.Reason = "already running"
 	case provider.StateNotFound:
+		if !createEnabled(i) {
+			// Adopt-existing mode: this instance points at a VM vmlab did not
+			// create (e.g. a Windows Teams box). Refuse to conjure a new one —
+			// power-manage only.
+			return target.Target{}, res, fmt.Errorf(
+				"azure: VM %q not found in resource group %q and azure.create=false "+
+					"(adopt-existing mode) — refusing to create it", vmName(i), rg(i))
+		}
 		if err := p.create(ctx, i); err != nil {
 			return target.Target{}, res, fmt.Errorf("az vm create: %w", err)
 		}
@@ -207,7 +215,10 @@ func (p *Provider) publicIP(ctx context.Context, i provider.Instance) (string, e
 // subscription override. Combines stdout+stderr for diagnostic parsing.
 func (p *Provider) run(ctx context.Context, i provider.Instance, args ...string) (string, error) {
 	if sub := i.SettingString("azure", "subscription"); sub != "" {
-		args = append([]string{"--subscription", sub}, args...)
+		// Append (command position), NOT prepend: recent az rejects a global-
+		// position `az --subscription <id> vm show …` ("misspelled or not
+		// recognized"), but accepts it after the command group.
+		args = append(args, "--subscription", sub)
 	}
 	cmd := exec.CommandContext(ctx, "az", args...)
 	cmd.Env = os.Environ()
@@ -232,6 +243,13 @@ func vmName(i provider.Instance) string {
 		return n
 	}
 	return i.Name
+}
+
+// createEnabled reports whether Up may `az vm create` a missing VM. Default
+// true (back-compat). Set azure.create: "false" to adopt an existing VM and
+// only ever start/stop it — never create or replace it.
+func createEnabled(i provider.Instance) bool {
+	return !strings.EqualFold(strings.TrimSpace(i.SettingString("azure", "create")), "false")
 }
 
 func settingOr(i provider.Instance, key, fallback string) string {
