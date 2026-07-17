@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-17
+
 ### Added
 - Azure `create: "false"` adopt-existing mode: `up`/`down` only start/stop a
   pre-existing VM (never create/replace it) — power-manage an external box (e.g.
