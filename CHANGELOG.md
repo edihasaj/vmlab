@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Azure `create: "false"` adopt-existing mode: `up`/`down` only start/stop a
+  pre-existing VM (never create/replace it) — power-manage an external box (e.g.
+  a Windows Teams-agent VM) for 9–5 cost control.
+
+### Fixed
+- Azure `--subscription` is now appended after the command group instead of
+  prepended; recent `az` rejects the global position ("misspelled or not
+  recognized").
+
 ## [0.3.2] - 2026-06-29
 
 ### Fixed
