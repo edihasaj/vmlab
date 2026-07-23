@@ -106,6 +106,54 @@ func TestWinGuestArgvSilencesProgress(t *testing.T) {
 	}
 }
 
+// TestWinNativeScriptCmdExeSinglePayloadVerbatim guards the fix for
+// `vmlab run <win> -- cmd /c "a & b"` (and any single command string wrapped by
+// WrapShell as `cmd.exe /c <line>`): the payload after /c must reach cmd.exe
+// verbatim, NOT cmdQuote'd. The old code emitted `/c "cmd /c \"a & b\""`, whose
+// `\"` cmd.exe treats literally, producing `'\"a & b\"' is not recognized`.
+func TestWinNativeScriptCmdExeSinglePayloadVerbatim(t *testing.T) {
+	// The shape WrapShell emits for a single command string on a Windows target.
+	script := winNativeScript([]string{"cmd.exe", "/c", `cmd /c "echo AA & echo BB"`})
+
+	if !strings.Contains(script, `$a='/c cmd /c "echo AA & echo BB"'`) {
+		t.Errorf("cmd.exe payload should be passed verbatim after /c, got:\n%s", script)
+	}
+	// The regression signature: cmd.exe must never receive CRT-style \" escaping.
+	if strings.Contains(script, `\"`) {
+		t.Errorf("cmd.exe payload must not be CRT-quoted (no \\\"), got:\n%s", script)
+	}
+}
+
+// TestWinNativeScriptCmdExeArgvCollapseVerbatim covers the working multi-token
+// form `-- cmd /c "echo AA & echo BB"` (argv collapses to three tokens): the
+// single payload after /c is still passed verbatim.
+func TestWinNativeScriptCmdExeArgvCollapseVerbatim(t *testing.T) {
+	script := winNativeScript([]string{"cmd", "/c", "echo AA & echo BB"})
+	if !strings.Contains(script, `$a='/c echo AA & echo BB'`) {
+		t.Errorf("cmd.exe single payload should be verbatim, got:\n%s", script)
+	}
+}
+
+// TestWinNativeScriptCmdExeMultiArgStillQuoted ensures the verbatim path is
+// scoped to a single payload: a cmd.exe invocation with several discrete args
+// after /c still gets CRT-correct cmdQuote so a spaced program path stays one
+// token.
+func TestWinNativeScriptCmdExeMultiArgStillQuoted(t *testing.T) {
+	script := winNativeScript([]string{"cmd", "/c", "my prog.exe", "x"})
+	if !strings.Contains(script, `$a='/c "my prog.exe" x'`) {
+		t.Errorf("multi-arg cmd.exe should keep cmdQuote, got:\n%s", script)
+	}
+}
+
+// TestWinNativeScriptNonCmdUnaffected guards that the verbatim carve-out only
+// applies to cmd.exe: other programs keep the cmdQuote path unchanged.
+func TestWinNativeScriptNonCmdUnaffected(t *testing.T) {
+	script := winNativeScript([]string{"sqlcmd", "-Q", "SELECT a FROM b"})
+	if !strings.Contains(script, `$a='-Q "SELECT a FROM b"'`) {
+		t.Errorf("non-cmd program should keep cmdQuote, got:\n%s", script)
+	}
+}
+
 // TestWinuiScriptClickAt guards the click-at kind added for WebView2 surfaces
 // (Teams/Electron/browser) where UIA InvokePattern is unreliable — it must
 // emit a raw SetCursorPos + mouse_event at the requested coords.

@@ -274,11 +274,7 @@ func winGuestArgv(cmd []string) ([]string, error) {
 // `.bat` shims route through cmd.exe which CreateProcess cannot launch
 // directly), then starts it with cmd[1:] quoted via cmdQuote.
 func winNativeScript(cmd []string) string {
-	quoted := make([]string, 0, len(cmd))
-	for _, a := range cmd[1:] {
-		quoted = append(quoted, cmdQuote(a))
-	}
-	argLine := strings.Join(quoted, " ")
+	argLine := winArgLine(cmd)
 	// SilentlyContinue suppresses PowerShell's progress stream ("Preparing
 	// modules for first use…"), which prlctl exec otherwise serializes as
 	// CLIXML <Objs> noise onto the caller's console ahead of real output.
@@ -294,6 +290,52 @@ func winNativeScript(cmd []string) string {
 		"$p=[System.Diagnostics.Process]::Start($si)\n" +
 		"$p.WaitForExit()\n" +
 		"exit $p.ExitCode"
+}
+
+// winArgLine builds the ProcessStartInfo.Arguments string for cmd[1:].
+//
+// cmd.exe is special: it parses its own command tail with rules unlike the CRT
+// (it does not understand the `\"`-style escaping cmdQuote emits). So when we
+// launch cmd.exe with a single command payload after /c or /k — the shape
+// WrapShell emits for a single command string (`cmd.exe /c <line>`) and the
+// shape a `run <t> -- cmd /c "a & b"` argv collapses to — cmdQuote'ing that
+// payload corrupts any quotes inside it (they arrive at cmd.exe as literal
+// `\"`). Pass the payload verbatim instead and let cmd.exe do the parsing.
+//
+// Every other case (multiple discrete args, or a non-cmd.exe program) keeps the
+// CRT-correct cmdQuote path, which is what CreateProcess/most programs expect.
+func winArgLine(cmd []string) string {
+	args := cmd[1:]
+	if isCmdExe(cmd[0]) && len(args) == 2 && isCmdSwitch(args[0]) {
+		return args[0] + " " + args[1]
+	}
+	quoted := make([]string, 0, len(args))
+	for _, a := range args {
+		quoted = append(quoted, cmdQuote(a))
+	}
+	return strings.Join(quoted, " ")
+}
+
+// isCmdExe reports whether name refers to the Windows command interpreter,
+// tolerating a directory prefix and the optional .exe suffix (e.g. "cmd",
+// "cmd.exe", `C:\Windows\System32\cmd.exe`).
+func isCmdExe(name string) bool {
+	base := name
+	if i := strings.LastIndexAny(base, `\/`); i >= 0 {
+		base = base[i+1:]
+	}
+	base = strings.ToLower(strings.TrimSuffix(strings.ToLower(base), ".exe"))
+	return base == "cmd"
+}
+
+// isCmdSwitch reports whether arg is cmd.exe's run-command switch (/c or /k).
+func isCmdSwitch(arg string) bool {
+	switch strings.ToLower(arg) {
+	case "/c", "/k":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *parallelsGuestTransport) Shell(ctx context.Context, t target.Target) error {

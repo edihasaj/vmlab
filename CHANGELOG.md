@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-23
+
+### Fixed
+- `vmlab run <windows-target> -- cmd /c "a & b"` (parallels-guest) no longer
+  mangles a single command string. cmd.exe parses its own tail, so the payload
+  after `/c`/`/k` is now passed verbatim instead of being CRT-quoted; previously
+  the inner quotes reached cmd.exe as literal `\"`, yielding
+  `'\"a & b\"' is not recognized as an internal or external command`.
+  Multi-arg cmd.exe invocations and non-cmd programs keep the CRT-correct
+  `cmdQuote` path.
+
 ## [0.3.3] - 2026-07-17
 
 ### Added
