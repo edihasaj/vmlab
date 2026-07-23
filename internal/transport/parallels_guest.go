@@ -24,6 +24,8 @@ import (
 // need to know whether parallels.host is local or remote.
 type parallelsGuestTransport struct{ bin string }
 
+const parallelsGuestFileChunkSize = 400
+
 // NewParallelsGuest returns the parallels-guest transport.
 func NewParallelsGuest() Transport { return &parallelsGuestTransport{bin: "ssh"} }
 
@@ -607,12 +609,15 @@ func (p *parallelsGuestTransport) runInteractiveGUI(ctx context.Context, t targe
 // runner can stage scripts without a shared folder. Chunk size stays well
 // under prlctl exec's argument ceiling.
 func (p *parallelsGuestTransport) writeGuestFile(ctx context.Context, t target.Target, remotePath string, data []byte) error {
-	const chunkSize = 800
+	// Parallels Desktop 26.4 silently hangs around 790 raw payload characters
+	// after the PowerShell command is wrapped for prlctl exec. Keep enough
+	// headroom for the fixed command and path portions of the encoded payload.
 	b64 := base64.StdEncoding.EncodeToString(data)
-	tmp := remotePath + ".vmlabgui"
+	quotedRemote := psSingleQuote(remotePath)
+	quotedTmp := psSingleQuote(remotePath + ".vmlabgui")
 	first := true
-	for i := 0; i < len(b64); i += chunkSize {
-		end := i + chunkSize
+	for i := 0; i < len(b64); i += parallelsGuestFileChunkSize {
+		end := i + parallelsGuestFileChunkSize
 		if end > len(b64) {
 			end = len(b64)
 		}
@@ -620,17 +625,17 @@ func (p *parallelsGuestTransport) writeGuestFile(ctx context.Context, t target.T
 		if first {
 			cmdlet = "Set-Content" // truncate any stale temp on the first chunk
 		}
-		script := cmdlet + " -LiteralPath '" + tmp + "' -Value '" + b64[i:end] + "' -NoNewline"
+		script := cmdlet + " -LiteralPath " + quotedTmp + " -Value '" + b64[i:end] + "' -NoNewline"
 		if _, err := p.runGuestPS(ctx, t, script, io.Discard); err != nil {
 			return err
 		}
 		first = false
 	}
 	if first {
-		_, err := p.runGuestPS(ctx, t, "Set-Content -LiteralPath '"+remotePath+"' -Value '' -NoNewline", io.Discard)
+		_, err := p.runGuestPS(ctx, t, "Set-Content -LiteralPath "+quotedRemote+" -Value '' -NoNewline", io.Discard)
 		return err
 	}
-	decode := "[IO.File]::WriteAllBytes('" + remotePath + "',[Convert]::FromBase64String((Get-Content -Raw -LiteralPath '" + tmp + "'))); Remove-Item -LiteralPath '" + tmp + "'"
+	decode := "[IO.File]::WriteAllBytes(" + quotedRemote + ",[Convert]::FromBase64String((Get-Content -Raw -LiteralPath " + quotedTmp + "))); Remove-Item -LiteralPath " + quotedTmp
 	_, err := p.runGuestPS(ctx, t, decode, io.Discard)
 	return err
 }

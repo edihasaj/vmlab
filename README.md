@@ -95,6 +95,7 @@ vmlab evidence show <run-id>
 | `vmlab web <target> -- <abx-args...>` | Drive a web target via abx. |
 | `vmlab gui <target> --kind click --selector ...` | Drive a desktop target via guiport. |
 | `vmlab screenshot <target> <out-path>` | Capture a screenshot from any transport that supports it. |
+| `vmlab cp <target> <local-path> <remote-path>` | Copy a small file into a guest without relying on a pre-existing share. |
 | `vmlab evidence ls/show/bundle/prune` | Inspect or zip per-run evidence directories. |
 | `vmlab provider ls/doctor` | List/health-check registered VM providers. |
 | `vmlab instance add/ls/show/rm/status/restart` | Manage provider instances under `~/.vmlab/instances/`. |

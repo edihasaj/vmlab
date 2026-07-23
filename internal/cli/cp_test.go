@@ -82,6 +82,55 @@ func TestPushFileToGuestWindows(t *testing.T) {
 	}
 }
 
+func TestPushFileToGuestWindowsKeepsChunksBelowParallelsHangThreshold(t *testing.T) {
+	rec := &recordingTransport{}
+	tgt := target.Target{Name: "win", Settings: map[string]any{"os": "windows"}}
+	data := []byte(strings.Repeat("x", 900))
+
+	if err := pushFileToGuest(context.Background(), rec, tgt, data, "C:/dest.txt"); err != nil {
+		t.Fatalf("pushFileToGuest: %v", err)
+	}
+
+	chunks := rec.calls[:len(rec.calls)-1]
+	if len(chunks) < 3 {
+		t.Fatalf("expected at least 3 bounded chunks, got %d", len(chunks))
+	}
+	for i, c := range chunks {
+		m := winChunkValue.FindStringSubmatch(c[len(c)-1])
+		if m == nil {
+			t.Fatalf("chunk %d missing -Value: %v", i, c)
+		}
+		if len(m[1]) > 400 {
+			t.Errorf("chunk %d has %d characters; Parallels 26.4 hangs near 790", i, len(m[1]))
+		}
+	}
+}
+
+func TestPushFileToGuestQuotesRemotePaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		os         string
+		remotePath string
+		want       string
+	}{
+		{name: "windows", os: "windows", remotePath: "C:/it's here/dest.txt", want: "'C:/it''s here/dest.txt'"},
+		{name: "posix", os: "linux", remotePath: "/tmp/it's here/dest", want: `'/tmp/it'"'"'s here/dest'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := &recordingTransport{}
+			tgt := target.Target{Name: tt.name, Settings: map[string]any{"os": tt.os}}
+			if err := pushFileToGuest(context.Background(), rec, tgt, []byte("x"), tt.remotePath); err != nil {
+				t.Fatalf("pushFileToGuest: %v", err)
+			}
+			last := strings.Join(rec.calls[len(rec.calls)-1], " ")
+			if !strings.Contains(last, tt.want) {
+				t.Errorf("final command does not safely quote remote path\n got: %s\nwant substring: %s", last, tt.want)
+			}
+		})
+	}
+}
+
 // TestPushFileToGuestPosix verifies the posix path uses printf+base64 and a
 // final base64 -d decode.
 func TestPushFileToGuestPosix(t *testing.T) {

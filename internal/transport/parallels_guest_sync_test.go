@@ -45,3 +45,12 @@ func TestParallelsGuestSyncRequiresVM(t *testing.T) {
 		t.Fatalf("expected parallels.vm error, got %v", err)
 	}
 }
+
+func TestParallelsGuestFileChunkLimitStaysBelowLiveHangThreshold(t *testing.T) {
+	// Parallels Desktop 26.4 was live-verified to succeed at 780 raw payload
+	// characters and silently hang at 790. Keep deliberate safety headroom
+	// for the command and remote path surrounding each data chunk.
+	if parallelsGuestFileChunkSize > 400 {
+		t.Fatalf("guest file chunk size %d exceeds the verified safety margin", parallelsGuestFileChunkSize)
+	}
+}

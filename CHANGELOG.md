@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows `vmlab cp` and interactive `parallels-guest` GUI staging no longer
+  hang at the `prlctl exec` argument ceiling on Parallels Desktop 26.4. Encoded
+  chunks now retain measured safety headroom, and guest paths containing
+  apostrophes are quoted safely on Windows and POSIX targets.
+
 ## [0.3.4] - 2026-07-23
 
 ### Fixed

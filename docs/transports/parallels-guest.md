@@ -25,13 +25,15 @@ Typically you don't create this target directly — it's the default
 | Capability | Supported |
 |---|---|
 | shell | no (use `prlctl enter` on the host) |
-| sync | no |
+| sync | yes (adds a Parallels shared folder; remote hosts stage via rsync first) |
 | install | no |
-| screenshot | no |
-| gui | no |
+| screenshot | yes |
+| gui | yes (Windows interactive-session UI Automation) |
 
-Use a separate sync path (rsync via SSH to the host, then prlctl exec) if
-you need to push files.
+`vmlab cp` is available for one-off scripts and configuration files. Its
+Windows staging uses deliberately small encoded chunks because Parallels
+Desktop 26.4 can silently hang near its `prlctl exec` argument ceiling.
+Use `vmlab sync` and the resulting shared folder for larger trees.
 
 ## Quoting
 

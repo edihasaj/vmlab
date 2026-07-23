@@ -65,13 +65,18 @@ func pushFileToGuest(ctx context.Context, tr transport.Transport, t target.Targe
 	// the chunk is wrapped again (UTF-16LE + base64) for PowerShell
 	// -EncodedCommand and handed to `prlctl exec`, which rejects over-long
 	// argument strings (PrlResult_GetParamByIndex: Invalid argument) well below
-	// the Windows 32k command-line limit. Keep chunks small so every hop stays
-	// under that prlctl ceiling; the cost is more round-trips (each a cold guest
-	// shell) for large files. This is aimed at scripts/configs — for big files a
-	// shared folder (`sync`) is the better tool.
-	const chunkSize = 800
+	// the Windows 32k command-line limit. Parallels Desktop 26.4 hangs instead
+	// of returning an error once the raw chunk reaches roughly 790 characters,
+	// and the remote path also contributes to the encoded payload. Keep 400
+	// characters of headroom so every hop stays under that prlctl ceiling.
+	// The cost is more round-trips (each a cold guest shell) for large files.
+	// This is aimed at scripts/configs — for big files a shared folder (`sync`)
+	// is the better tool.
+	const chunkSize = 400
 	windows := t.OSKind() == "windows"
 	tmp := remotePath + ".vmlabcp"
+	quotedTmp := quoteGuestPath(tmp, windows)
+	quotedRemote := quoteGuestPath(remotePath, windows)
 
 	first := true
 	for i := 0; i < len(b64); i += chunkSize {
@@ -87,13 +92,13 @@ func pushFileToGuest(ctx context.Context, tr transport.Transport, t target.Targe
 				cmdlet = "Set-Content" // truncate any stale temp on the first chunk
 			}
 			argv = []string{"powershell", "-NoProfile", "-Command",
-				cmdlet + " -LiteralPath '" + tmp + "' -Value '" + part + "' -NoNewline"}
+				cmdlet + " -LiteralPath " + quotedTmp + " -Value '" + part + "' -NoNewline"}
 		} else {
 			redir := ">>"
 			if first {
 				redir = ">"
 			}
-			argv = []string{"sh", "-c", "printf %s '" + part + "' " + redir + " '" + tmp + "'"}
+			argv = []string{"sh", "-c", "printf %s '" + part + "' " + redir + " " + quotedTmp}
 		}
 		if err := runGuestChecked(ctx, tr, t, argv); err != nil {
 			return fmt.Errorf("cp: streaming chunk: %w", err)
@@ -104,22 +109,29 @@ func pushFileToGuest(ctx context.Context, tr transport.Transport, t target.Targe
 		// Empty file: nothing was streamed; create an empty destination.
 		if windows {
 			return runGuestChecked(ctx, tr, t, []string{"powershell", "-NoProfile", "-Command",
-				"Set-Content -LiteralPath '" + remotePath + "' -Value '' -NoNewline"})
+				"Set-Content -LiteralPath " + quotedRemote + " -Value '' -NoNewline"})
 		}
-		return runGuestChecked(ctx, tr, t, []string{"sh", "-c", ": > '" + remotePath + "'"})
+		return runGuestChecked(ctx, tr, t, []string{"sh", "-c", ": > " + quotedRemote})
 	}
 
 	var decode []string
 	if windows {
 		decode = []string{"powershell", "-NoProfile", "-Command",
-			"[IO.File]::WriteAllBytes('" + remotePath + "',[Convert]::FromBase64String((Get-Content -Raw -LiteralPath '" + tmp + "'))); Remove-Item -LiteralPath '" + tmp + "'"}
+			"[IO.File]::WriteAllBytes(" + quotedRemote + ",[Convert]::FromBase64String((Get-Content -Raw -LiteralPath " + quotedTmp + "))); Remove-Item -LiteralPath " + quotedTmp}
 	} else {
-		decode = []string{"sh", "-c", "base64 -d '" + tmp + "' > '" + remotePath + "' && rm -f '" + tmp + "'"}
+		decode = []string{"sh", "-c", "base64 -d " + quotedTmp + " > " + quotedRemote + " && rm -f " + quotedTmp}
 	}
 	if err := runGuestChecked(ctx, tr, t, decode); err != nil {
 		return fmt.Errorf("cp: decoding on guest: %w", err)
 	}
 	return nil
+}
+
+func quoteGuestPath(path string, windows bool) string {
+	if windows {
+		return "'" + strings.ReplaceAll(path, "'", "''") + "'"
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
 }
 
 func runGuestChecked(ctx context.Context, tr transport.Transport, t target.Target, argv []string) error {
