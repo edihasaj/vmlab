@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `vmlab cp` now reconstructs files on both BSD/macOS and GNU/BusyBox targets
+  by selecting the supported `base64` decode flag.
+
 ## [0.3.5] - 2026-07-24
 
 ### Fixed

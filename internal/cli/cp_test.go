@@ -131,8 +131,8 @@ func TestPushFileToGuestQuotesRemotePaths(t *testing.T) {
 	}
 }
 
-// TestPushFileToGuestPosix verifies the posix path uses printf+base64 and a
-// final base64 -d decode.
+// TestPushFileToGuestPosix verifies the posix path uses printf+base64 and
+// supports both BSD/macOS and GNU/BusyBox decode flags.
 func TestPushFileToGuestPosix(t *testing.T) {
 	rec := &recordingTransport{}
 	tgt := target.Target{Name: "lin", Settings: map[string]any{"os": "linux"}}
@@ -146,7 +146,8 @@ func TestPushFileToGuestPosix(t *testing.T) {
 		t.Errorf("first posix chunk should printf into temp with truncate, got: %s", first)
 	}
 	last := strings.Join(rec.calls[len(rec.calls)-1], " ")
-	if !strings.Contains(last, "base64 -d '/tmp/dest.vmlabcp' > '/tmp/dest'") {
-		t.Errorf("final posix call should base64-decode into dest, got: %s", last)
+	if !strings.Contains(last, "base64 -D < '/tmp/dest.vmlabcp' > '/tmp/dest'") ||
+		!strings.Contains(last, "base64 -d < '/tmp/dest.vmlabcp' > '/tmp/dest'") {
+		t.Errorf("final posix call should support BSD and GNU base64 decode flags, got: %s", last)
 	}
 }

@@ -119,7 +119,10 @@ func pushFileToGuest(ctx context.Context, tr transport.Transport, t target.Targe
 		decode = []string{"powershell", "-NoProfile", "-Command",
 			"[IO.File]::WriteAllBytes(" + quotedRemote + ",[Convert]::FromBase64String((Get-Content -Raw -LiteralPath " + quotedTmp + "))); Remove-Item -LiteralPath " + quotedTmp}
 	} else {
-		decode = []string{"sh", "-c", "base64 -d " + quotedTmp + " > " + quotedRemote + " && rm -f " + quotedTmp}
+		// BSD base64 (macOS) decodes with -D; GNU and BusyBox use -d.
+		// Try both so POSIX targets do not inherit the controller's dialect.
+		decode = []string{"sh", "-c", "(base64 -D < " + quotedTmp + " > " + quotedRemote +
+			" 2>/dev/null || base64 -d < " + quotedTmp + " > " + quotedRemote + ") && rm -f " + quotedTmp}
 	}
 	if err := runGuestChecked(ctx, tr, t, decode); err != nil {
 		return fmt.Errorf("cp: decoding on guest: %w", err)
