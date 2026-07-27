@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -152,6 +153,9 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 }
 
 func TestSSHWindowsInteractiveGUIRoutesThroughDesktopTask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("interactive GUI stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "ssh.args")
 	script := `#!/bin/sh
