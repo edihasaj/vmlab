@@ -255,6 +255,9 @@ func TestSSHWindowsElevatedFlagsRouteThroughTask(t *testing.T) {
 }
 
 func TestSSHWindowsApproveIteratesLabels(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("approve stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	// Stub ssh: succeed only when the encoded PowerShell payload contains
 	// our chosen target label "Allow". Anything else exits 1 (no match).
