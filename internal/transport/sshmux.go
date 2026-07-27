@@ -3,6 +3,7 @@ package transport
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/edihasaj/vmlab/internal/target"
 )
@@ -53,6 +54,13 @@ func sshMultiplexOptionString(t target.Target) string {
 // persist window. ok is false when the target opted out or no socket dir could
 // be created (we then fall back to plain, unmultiplexed ssh rather than error).
 func sshMultiplexConfig(t target.Target) (dir, persist string, ok bool) {
+	return sshMultiplexConfigForOS(t, runtime.GOOS)
+}
+
+func sshMultiplexConfigForOS(t target.Target, goos string) (dir, persist string, ok bool) {
+	if goos == "windows" {
+		return "", "", false
+	}
 	if t.Setting("ssh", "multiplex") == false { // unset (nil) keeps it enabled
 		return "", "", false
 	}
