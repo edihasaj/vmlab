@@ -299,6 +299,9 @@ func TestABXRunWebNeverFallsBackToLocalExec(t *testing.T) {
 }
 
 func TestABXGUIWritesOutputToStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("abx output stub uses a POSIX shell")
+	}
 	// Read-style kinds (observe/tree) are useless if their report is
 	// discarded — agents act on the output.
 	dir := t.TempDir()
@@ -321,6 +324,9 @@ echo "ax-tree-content"
 }
 
 func TestGuiportGUIWritesOutputToStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("guiport output stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	script := `#!/bin/sh
 echo "window: TextEdit"
@@ -491,6 +497,9 @@ func TestSSHMacDoctorProbesRemoteGuiport(t *testing.T) {
 }
 
 func TestSSHMacDoctorReportsStdoutFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SSH failure stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "ssh.args")
 	script := fmt.Sprintf(`#!/bin/sh
@@ -634,6 +643,9 @@ func TestSSHAtspiFallsThroughForNonLabelVerbs(t *testing.T) {
 }
 
 func TestSSHApproveFallsBackToReturnKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SSH approval stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	// Stub ssh: fail click-text invocations (windows not titled Allow/OK),
 	// succeed on the Return-key fallback path. We discriminate by whether
@@ -669,6 +681,9 @@ exit 1
 }
 
 func TestGuiportApproveClicksFirstMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("guiport approval stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	// Stub: succeed only when click-text matches "Allow", fail otherwise.
 	script := `#!/bin/sh
@@ -718,6 +733,9 @@ func TestGuiportApproveTimesOutWhenNothingMatches(t *testing.T) {
 }
 
 func TestGuiportApproveDenyShortCircuitsAllow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("guiport denial stub uses a POSIX shell")
+	}
 	dir := t.TempDir()
 	// Stub: both "Allow" and "Don't Send" would succeed; deny should win
 	// because it's checked first.
