@@ -288,3 +288,20 @@ func TestWinuiScriptTreeFlatDump(t *testing.T) {
 		}
 	}
 }
+
+func TestWinuiClickTextBoundsSearchToForegroundWindow(t *testing.T) {
+	script, err := winuiScript(GUIAction{Kind: "click-text", Text: "Accept"})
+	if err != nil {
+		t.Fatalf("winuiScript click-text: %v", err)
+	}
+	for _, want := range []string{"GetForegroundWindow", "FromHandle", "PropertyCondition", "FindFirst"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("click-text script missing %q:\n%s", want, script)
+		}
+	}
+	for _, unsafe := range []string{"System.Collections.Queue", "FindAll"} {
+		if strings.Contains(script, unsafe) {
+			t.Errorf("click-text must not enumerate desktop descendants with %q:\n%s", unsafe, script)
+		}
+	}
+}

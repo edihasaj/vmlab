@@ -74,7 +74,7 @@ func NewSSHWindows() Transport { return &sshWindowsTransport{} }
 func (s *sshWindowsTransport) Name() string { return "ssh-windows" }
 
 func (s *sshWindowsTransport) Capabilities() Caps {
-	return Caps{Shell: true, Sync: true, Install: true, Screenshot: true}
+	return Caps{Shell: true, Sync: true, Install: true, Screenshot: true, GUI: true}
 }
 
 func (s *sshWindowsTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -280,7 +280,7 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 	if path == "" {
 		return fmt.Errorf("ssh-windows: screenshot needs a destination path")
 	}
-	remoteTmp := `$env:TEMP + '\vmlab-shot.png'`
+	remotePath := fmt.Sprintf(`C:\Users\Public\vmlab-shot-%d.png`, time.Now().UnixNano())
 	script := strings.Join([]string{
 		"Add-Type -AssemblyName System.Windows.Forms;",
 		"Add-Type -AssemblyName System.Drawing;",
@@ -288,29 +288,20 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 		"$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height;",
 		"$g = [System.Drawing.Graphics]::FromImage($bmp);",
 		"$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size);",
-		"$out = " + remoteTmp + ";",
+		"$out = " + posixSingleQuote(remotePath) + ";",
 		"$bmp.Save($out, [System.Drawing.Imaging.ImageFormat]::Png);",
-		"[Console]::Out.Write($out)",
+		"$g.Dispose(); $bmp.Dispose();",
 	}, " ")
-	// Force PowerShell for the capture regardless of the configured shell —
-	// cmd.exe cannot drive .NET assemblies directly. Build the remote command
-	// directly with -EncodedCommand so we don't touch the target's settings.
-	dial := winSSHDialArgs(t, false)
-	enc := encodePowerShell("& { " + script + " }")
-	remoteCmd := "powershell -NoProfile -NonInteractive -EncodedCommand " + enc
-	sshArgs := append(dial, remoteCmd)
-	var outBuf strings.Builder
-	res, err := runExternal(ctx, "ssh", sshArgs, &outBuf, io.Discard)
-	if err != nil {
-		return fmt.Errorf("ssh-windows screenshot: %w", err)
+	if strings.EqualFold(t.SettingString("ssh", "guiSession"), "interactive") {
+		if err := s.runInteractiveGUI(ctx, t, GUIAction{Kind: "screenshot"}, script, io.Discard); err != nil {
+			return err
+		}
+	} else {
+		if _, err := s.runPowerShell(ctx, t, script, io.Discard, io.Discard); err != nil {
+			return fmt.Errorf("ssh-windows screenshot: %w", err)
+		}
 	}
-	if res.ExitCode != 0 {
-		return fmt.Errorf("ssh-windows screenshot exit=%d", res.ExitCode)
-	}
-	remotePath := strings.TrimSpace(outBuf.String())
-	if remotePath == "" {
-		return fmt.Errorf("ssh-windows: remote screenshot returned empty path")
-	}
+	defer s.removeRemoteFile(context.Background(), t, remotePath)
 	// Windows reports the temp path with backslashes (C:\Users\...\vmlab-shot.png).
 	// scp treats backslashes as escape characters in the remote spec, so the pull
 	// silently resolves the wrong path and fails — forward slashes are accepted by
@@ -330,7 +321,7 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 		args = append(args, "-P", port)
 	}
 	args = append(args, fmt.Sprintf("%s@%s:%s", user, host, remotePath), path)
-	res, err = runExternal(ctx, "scp", args, io.Discard, io.Discard)
+	res, err := runExternal(ctx, "scp", args, io.Discard, io.Discard)
 	if err != nil {
 		return err
 	}
@@ -340,11 +331,10 @@ func (s *sshWindowsTransport) Screenshot(ctx context.Context, t target.Target, p
 	return nil
 }
 
-// GUI drives Windows UI through PowerShell + UIA / SendKeys over SSH.
-// Unlike parallels-guest's GUI() (which runs out-of-session and trips UIPI),
-// OpenSSH on Windows attaches to the logged-in user's interactive desktop
-// session, so SendKeys + ValuePattern actually work. Verbs map to UIA
-// patterns where possible and fall back to SendKeys for input.
+// GUI drives Windows UI through PowerShell + UIA / SendKeys over SSH. Windows
+// OpenSSH runs outside the logged-in desktop, so targets configured with
+// ssh.guiSession: interactive route actions through a one-shot scheduled task
+// bound to the current INTERACTIVE user.
 //
 // Kinds covered:
 //   - screenshot — captures the desktop via System.Drawing.Bitmap; same path
@@ -383,23 +373,162 @@ func (s *sshWindowsTransport) GUI(ctx context.Context, t target.Target, a GUIAct
 	if err != nil {
 		return err
 	}
-	enc := encodePowerShell("& { " + script + " }")
-	dial := winSSHDialArgs(t, false)
-	remoteCmd := "powershell -NoProfile -NonInteractive -EncodedCommand " + enc
-	sshArgs := append(dial, remoteCmd)
-	var errb strings.Builder
-	res, err := runExternal(ctx, "ssh", sshArgs, stdout, &errb)
+	if strings.EqualFold(t.SettingString("ssh", "guiSession"), "interactive") {
+		return s.runInteractiveGUI(ctx, t, a, script, stdout)
+	}
+	res, err := s.runPowerShell(ctx, t, script, stdout, stderr)
 	if err != nil {
 		return err
 	}
 	if res.ExitCode != 0 {
-		msg := strings.TrimSpace(errb.String())
-		if msg != "" {
-			return fmt.Errorf("ssh-windows gui %s exited %d: %s", a.Kind, res.ExitCode, msg)
-		}
 		return fmt.Errorf("ssh-windows gui %s exited %d", a.Kind, res.ExitCode)
 	}
 	return nil
+}
+
+func (s *sshWindowsTransport) runPowerShell(ctx context.Context, t target.Target, script string, stdout, stderr io.Writer) (Result, error) {
+	enc := encodePowerShell("& { " + script + " }")
+	sshArgs := append(winSSHDialArgs(t, false), "powershell -NoProfile -NonInteractive -EncodedCommand "+enc)
+	var errb strings.Builder
+	errWriter := io.MultiWriter(stderr, &errb)
+	res, err := runExternal(ctx, "ssh", sshArgs, stdout, errWriter)
+	if err != nil {
+		return res, err
+	}
+	if res.ExitCode != 0 {
+		msg := strings.TrimSpace(errb.String())
+		if msg != "" {
+			return res, fmt.Errorf("ssh-windows powershell exited %d: %s", res.ExitCode, msg)
+		}
+		return res, fmt.Errorf("ssh-windows powershell exited %d", res.ExitCode)
+	}
+	return res, nil
+}
+
+func (s *sshWindowsTransport) writeRemoteFile(ctx context.Context, t target.Target, path string, data []byte) error {
+	const chunkSize = 4096
+	encoded := base64.StdEncoding.EncodeToString(data)
+	tmp := path + ".b64"
+	for start := 0; start < len(encoded); start += chunkSize {
+		end := start + chunkSize
+		if end > len(encoded) {
+			end = len(encoded)
+		}
+		cmdlet := "Add-Content"
+		if start == 0 {
+			cmdlet = "Set-Content"
+		}
+		script := fmt.Sprintf("%s -LiteralPath %s -Value %s -NoNewline",
+			cmdlet, posixSingleQuote(tmp), posixSingleQuote(encoded[start:end]))
+		if _, err := s.runPowerShell(ctx, t, script, io.Discard, io.Discard); err != nil {
+			return err
+		}
+	}
+	decode := fmt.Sprintf("[IO.File]::WriteAllBytes(%s,[Convert]::FromBase64String((Get-Content -Raw -LiteralPath %s))); Remove-Item -LiteralPath %s",
+		posixSingleQuote(path), posixSingleQuote(tmp), posixSingleQuote(tmp))
+	_, err := s.runPowerShell(ctx, t, decode, io.Discard, io.Discard)
+	return err
+}
+
+func (s *sshWindowsTransport) removeRemoteFile(ctx context.Context, t target.Target, paths ...string) {
+	if len(paths) == 0 {
+		return
+	}
+	quoted := make([]string, 0, len(paths))
+	for _, path := range paths {
+		quoted = append(quoted, posixSingleQuote(path))
+	}
+	_, _ = s.runPowerShell(ctx, t,
+		"Remove-Item -LiteralPath "+strings.Join(quoted, ",")+" -ErrorAction SilentlyContinue",
+		io.Discard, io.Discard)
+}
+
+// runInteractiveGUI stages a payload through SSH, then executes it in the
+// logged-in Windows user's desktop via Task Scheduler's INTERACTIVE principal.
+func (s *sshWindowsTransport) runInteractiveGUI(ctx context.Context, t target.Target, a GUIAction, payload string, stdout io.Writer) error {
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	base := `C:\Users\Public\vmlab-gui-` + suffix
+	scriptPath := base + ".ps1"
+	taskPath := base + ".cmd"
+	outPath := base + ".out"
+	donePath := base + ".done"
+	taskName := "vmlabGui-" + suffix
+
+	wrapper := "$ErrorActionPreference='Stop'\r\n" +
+		"try {\r\n  & {\r\n" + payload + "\r\n  } *> " + posixSingleQuote(outPath) + "\r\n" +
+		"  'OK' | Set-Content -LiteralPath " + posixSingleQuote(donePath) + " -Encoding ascii\r\n" +
+		"} catch {\r\n  \"ERR: $_\" | Out-File -FilePath " + posixSingleQuote(outPath) + " -Encoding utf8\r\n" +
+		"  'ERR' | Set-Content -LiteralPath " + posixSingleQuote(donePath) + " -Encoding ascii\r\n}\r\n"
+	taskCmd := `schtasks /create /tn ` + taskName +
+		` /tr "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ` + scriptPath + `"` +
+		` /sc once /st 23:59 /ru INTERACTIVE /it /f` + "\r\n" +
+		`schtasks /run /tn ` + taskName + "\r\n"
+
+	if err := s.writeRemoteFile(ctx, t, scriptPath, []byte(wrapper)); err != nil {
+		return fmt.Errorf("ssh-windows gui %s: write script: %w", a.Kind, err)
+	}
+	if err := s.writeRemoteFile(ctx, t, taskPath, []byte(taskCmd)); err != nil {
+		s.removeRemoteFile(context.Background(), t, scriptPath)
+		return fmt.Errorf("ssh-windows gui %s: write task: %w", a.Kind, err)
+	}
+	defer func() {
+		_, _ = s.runPowerShell(context.Background(), t,
+			"schtasks /end /tn "+posixSingleQuote(taskName)+" 2>$null; schtasks /delete /tn "+posixSingleQuote(taskName)+" /f 2>$null; Remove-Item -LiteralPath "+
+				strings.Join([]string{posixSingleQuote(scriptPath), posixSingleQuote(taskPath), posixSingleQuote(outPath), posixSingleQuote(donePath)}, ",")+
+				" -ErrorAction SilentlyContinue",
+			io.Discard, io.Discard)
+	}()
+
+	launch := "Remove-Item -LiteralPath " + posixSingleQuote(outPath) + "," + posixSingleQuote(donePath) +
+		" -ErrorAction SilentlyContinue; cmd.exe /c " + posixSingleQuote(taskPath)
+	if _, err := s.runPowerShell(ctx, t, launch, io.Discard, io.Discard); err != nil {
+		return fmt.Errorf("ssh-windows gui %s: launch interactive task: %w", a.Kind, err)
+	}
+
+	timeout := 90 * time.Second
+	switch a.Kind {
+	case "click", "click-text", "observe", "tree":
+		// Third-party UIA providers, notably WebView2, can block inside
+		// FindFirst/FindAll. Bound those actions and terminate their task.
+		timeout = 15 * time.Second
+	}
+	if ms := extraInt(a.Extra, "timeoutMs"); ms > 0 {
+		timeout = time.Duration(ms) * time.Millisecond
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("ssh-windows gui %s: interactive task did not complete within %s; ensure a user is logged in", a.Kind, timeout)
+		}
+		var status strings.Builder
+		_, err := s.runPowerShell(ctx, t,
+			"if (Test-Path -LiteralPath "+posixSingleQuote(donePath)+") { Get-Content -LiteralPath "+posixSingleQuote(donePath)+" -Raw }",
+			&status, io.Discard)
+		if err != nil {
+			return fmt.Errorf("ssh-windows gui %s: poll: %w", a.Kind, err)
+		}
+		if strings.TrimSpace(status.String()) != "" {
+			var out strings.Builder
+			_, err = s.runPowerShell(ctx, t,
+				"if (Test-Path -LiteralPath "+posixSingleQuote(outPath)+") { Get-Content -LiteralPath "+posixSingleQuote(outPath)+" -Raw }",
+				&out, io.Discard)
+			if err != nil {
+				return fmt.Errorf("ssh-windows gui %s: read output: %w", a.Kind, err)
+			}
+			if strings.HasPrefix(strings.TrimSpace(status.String()), "ERR") {
+				return fmt.Errorf("ssh-windows gui %s failed in desktop: %s", a.Kind, strings.TrimSpace(out.String()))
+			}
+			if out.Len() > 0 {
+				_, _ = io.WriteString(stdout, out.String())
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(700 * time.Millisecond):
+		}
+	}
 }
 
 // approve polls for a consent dialog and clicks the first matching button via

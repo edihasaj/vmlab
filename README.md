@@ -161,7 +161,7 @@ Multiple top-level args are union: `vmlab doctor a @mobile`.
 | `local` | Run on the dev machine itself. Useful for testing flows. |
 | `crabbox` | Shells out to `crabbox` for SSH-reachable hosts (Linux/Windows/macOS VMs). |
 | `ssh` | Direct SSH to Linux hosts (with optional `ssh.display` for X11/Xvfb desktop UI). |
-| `ssh-windows` | Windows over SSH — PowerShell + UIAutomation + SendKeys for input verbs. |
+| `ssh-windows` | Windows over SSH. Set `ssh.guiSession: interactive` for real desktop UI and screenshots. |
 | `parallels-guest` | Parallels guest (Windows/macOS) — read-mostly verbs via `prlctl`. |
 | `abx` | Headless browser actions. Tagged for `web` capability. |
 | `guiport` | Native macOS desktop UI driving via Accessibility + OCR fallback. |

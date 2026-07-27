@@ -715,23 +715,28 @@ Start-Sleep -Milliseconds 120
 		if a.Text == "" {
 			return "", fmt.Errorf("parallels-guest gui click-text requires text")
 		}
-		// Substring Name match — broader than Find-ByText's exact-match.
-		return prelude + fmt.Sprintf(`$root = [Windows.Automation.AutomationElement]::RootElement
-$walker = [Windows.Automation.TreeWalker]::ControlViewWalker
-$found = $null
-$queue = New-Object 'System.Collections.Queue'
-$queue.Enqueue($root)
-while ($queue.Count -gt 0 -and -not $found) {
-  $cur = $queue.Dequeue()
-  $name = $cur.Current.Name
-  if ($name -and $name.Contains(%q)) { $found = $cur; break }
-  $child = $walker.GetFirstChild($cur)
-  while ($child) { $queue.Enqueue($child); $child = $walker.GetNextSibling($child) }
-}
-if (-not $found) { throw "no element with Name containing %q" }
+		// Use an exact indexed UIA lookup inside the foreground window.
+		// Enumerating descendants can hang indefinitely in WebView2 providers.
+		return prelude + fmt.Sprintf(`Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern System.IntPtr GetForegroundWindow();' -Name FG -Namespace W -PassThru | Out-Null
+$h = [W.FG]::GetForegroundWindow()
+$root = $null
+if ($h -ne [System.IntPtr]::Zero) { $root = [Windows.Automation.AutomationElement]::FromHandle($h) }
+if (-not $root) { $root = [Windows.Automation.AutomationElement]::RootElement }
+$cond = New-Object Windows.Automation.OrCondition @(
+  (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, %q)),
+  (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, %q))
+)
+$found = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $cond)
+if (-not $found) { throw "no element with exact Name or AutomationId %q; use click-at for WebView content" }
 $pat = $null
 if ($found.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { $pat.Invoke() }
-else { throw "element does not support InvokePattern" }`, a.Text, a.Text), nil
+elseif ($found.TryGetCurrentPattern([Windows.Automation.TogglePattern]::Pattern, [ref]$pat)) { $pat.Toggle() }
+else {
+  $r = $found.Current.BoundingRectangle
+  [System.Windows.Forms.Cursor]::Position = New-Object Drawing.Point ([int]($r.X + $r.Width/2)), ([int]($r.Y + $r.Height/2))
+  Add-Type -MemberDefinition '[DllImport("user32.dll")]public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);' -Name U32 -Namespace W
+  [W.U32]::mouse_event(0x2, 0, 0, 0, 0); [W.U32]::mouse_event(0x4, 0, 0, 0, 0)
+}`, a.Text, a.Text, a.Text), nil
 	case "type":
 		if a.Text == "" {
 			return "", fmt.Errorf("gui type requires text")

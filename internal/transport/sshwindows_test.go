@@ -151,6 +151,58 @@ func TestSSHWindowsDoctorPwshProbe(t *testing.T) {
 	}
 }
 
+func TestSSHWindowsInteractiveGUIRoutesThroughDesktopTask(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "ssh.args")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "` + argsFile + `"
+printf 'OK'
+`
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withPath(t, dir)
+
+	tr := NewSSHWindows()
+	if !tr.Capabilities().GUI {
+		t.Fatal("ssh-windows must advertise GUI support")
+	}
+	tgt := target.Target{
+		Settings: map[string]any{
+			"ssh": map[string]any{
+				"host":       "win.lan",
+				"guiSession": "interactive",
+			},
+		},
+	}
+	var stdout bytes.Buffer
+	err := tr.GUI(context.Background(), tgt, GUIAction{
+		Kind: "open-url",
+		Path: "https://example.com",
+	}, &stdout, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded strings.Builder
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if !strings.Contains(line, "-EncodedCommand ") {
+			continue
+		}
+		decoded.WriteString(decodePowerShell(t, extractEncodedCommand(t, line)))
+		decoded.WriteByte('\n')
+	}
+	for _, want := range []string{`C:\Users\Public\vmlab-gui-`, "schtasks /end", "schtasks /delete"} {
+		if !strings.Contains(decoded.String(), want) {
+			t.Errorf("interactive GUI route missing %q:\n%s", want, decoded.String())
+		}
+	}
+}
+
 func TestParseElevatedOutbox(t *testing.T) {
 	raw := []byte(`{"exitCode":7,"stdout":"hello\n","stderr":"warn\n"}`)
 	var so, se bytes.Buffer
