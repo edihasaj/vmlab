@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/edihasaj/vmlab/internal/target"
@@ -23,7 +24,16 @@ func NewLocal() Transport { return &localTransport{} }
 func (l *localTransport) Name() string { return "local" }
 
 func (l *localTransport) Capabilities() Caps {
-	return Caps{Shell: true, Sync: false, Install: true}
+	return localCapabilities(runtime.GOOS)
+}
+
+func localCapabilities(goos string) Caps {
+	caps := Caps{Shell: true, Sync: false, Install: true}
+	if goos == "windows" {
+		caps.Screenshot = true
+		caps.GUI = true
+	}
+	return caps
 }
 
 func (l *localTransport) Doctor(ctx context.Context, t target.Target) Health {
@@ -80,9 +90,71 @@ func (l *localTransport) Shell(ctx context.Context, t target.Target) error {
 }
 
 func (l *localTransport) Screenshot(ctx context.Context, t target.Target, path string) error {
-	return fmt.Errorf("local: screenshot not supported")
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("local: screenshot not supported")
+	}
+	if path == "" {
+		return fmt.Errorf("local: screenshot needs a destination path")
+	}
+	script := strings.Join([]string{
+		"Add-Type -AssemblyName System.Windows.Forms;",
+		"Add-Type -AssemblyName System.Drawing;",
+		"$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;",
+		"$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height;",
+		"$g = [System.Drawing.Graphics]::FromImage($bmp);",
+		"$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size);",
+		"$bmp.Save(" + posixSingleQuote(path) + ", [System.Drawing.Imaging.ImageFormat]::Png);",
+		"$g.Dispose(); $bmp.Dispose();",
+	}, " ")
+	res, err := runLocalPowerShell(ctx, script, io.Discard, io.Discard)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("local: screenshot exited %d", res.ExitCode)
+	}
+	return nil
 }
 
 func (l *localTransport) GUI(ctx context.Context, t target.Target, a GUIAction, stdout, stderr io.Writer) error {
-	return fmt.Errorf("local: gui not supported")
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("local: gui not supported")
+	}
+	if a.Kind == "wait" {
+		ms := extraInt(a.Extra, "milliseconds")
+		if ms == 0 {
+			ms = extraInt(a.Extra, "ms")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(max(ms, 0)) * time.Millisecond):
+			return nil
+		}
+	}
+	if a.Kind == "screenshot" {
+		return l.Screenshot(ctx, t, a.Path)
+	}
+	script, err := winuiScript(a)
+	if err != nil {
+		return err
+	}
+	res, err := runLocalPowerShell(ctx, script, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("local: gui %s exited %d", a.Kind, res.ExitCode)
+	}
+	return nil
+}
+
+func runLocalPowerShell(ctx context.Context, script string, stdout, stderr io.Writer) (Result, error) {
+	return runExternal(
+		ctx,
+		"powershell.exe",
+		[]string{"-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell("& { " + script + " }")},
+		stdout,
+		stderr,
+	)
 }
