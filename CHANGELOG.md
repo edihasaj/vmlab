@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `vmlab gui <parallels-guest-target> --kind launch` starts a program **on the
+  desktop**. `vmlab run` cannot: `prlctl exec` is Session 0 (SYSTEM), so a
+  window it starts has no window handle and never appears in `screenshot`.
+  `--path` is the executable and `--text` its arguments; a bare `--text`
+  command line is split into the two. Prints `pid=<n>`.
+
+### Changed
+
+- `--kind` help now lists `launch` and `open-url`, and `--path`/`--text` help
+  spells out their per-kind meanings.
+- `docs/transports/parallels-guest.md` documents `parallels.guiSession:
+  interactive` and the full GUI kind list — without that setting, desktop input
+  and screenshots silently target the empty Session 0 desktop.
+
 ### Fixed
 
 - `vmlab cp` now reconstructs files on both BSD/macOS and GNU/BusyBox targets

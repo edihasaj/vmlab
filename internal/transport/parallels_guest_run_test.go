@@ -169,6 +169,111 @@ func TestWinuiScriptClickAt(t *testing.T) {
 	}
 }
 
+// TestWinuiScriptLaunch guards the launch kind: starting a program on the real
+// desktop. `vmlab run` can't do this — prlctl exec is Session 0 (SYSTEM), so
+// what it starts has no window handle and never appears in a screenshot.
+func TestWinuiScriptLaunch(t *testing.T) {
+	script, err := winuiScript(GUIAction{
+		Kind: "launch",
+		Path: "powershell.exe",
+		Text: "-NoProfile -File C:/Users/Public/report.ps1",
+	})
+	if err != nil {
+		t.Fatalf("winuiScript launch: %v", err)
+	}
+	for _, want := range []string{
+		`-FilePath 'powershell.exe'`,
+		`-ArgumentList '-NoProfile -File C:/Users/Public/report.ps1'`,
+		"-PassThru",
+		`Write-Output ("pid=" + $p.Id)`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("launch script missing %q\n%s", want, script)
+		}
+	}
+}
+
+// A bare --text command line is split into executable + args, so callers don't
+// have to use --path explicitly for the common case.
+func TestWinuiScriptLaunchTextOnly(t *testing.T) {
+	script, err := winuiScript(GUIAction{Kind: "launch", Text: "notepad.exe C:/tmp/a.txt"})
+	if err != nil {
+		t.Fatalf("winuiScript launch: %v", err)
+	}
+	if !strings.Contains(script, `-FilePath 'notepad.exe'`) ||
+		!strings.Contains(script, `-ArgumentList 'C:/tmp/a.txt'`) {
+		t.Errorf("text-only launch split wrong:\n%s", script)
+	}
+}
+
+// A command line with embedded double quotes (sqlcmd -Q "SELECT ...") is the
+// normal case and must survive intact. Go's %q would emit backslash escapes,
+// which PowerShell does not honour — the guest then fails to parse the args.
+func TestWinuiScriptLaunchQuotedArgs(t *testing.T) {
+	script, err := winuiScript(GUIAction{
+		Kind: "launch",
+		Path: "cmd.exe",
+		Text: `/k sqlcmd -Q "SELECT TOP 5 x FROM y"`,
+	})
+	if err != nil {
+		t.Fatalf("winuiScript launch: %v", err)
+	}
+	if !strings.Contains(script, `-ArgumentList '/k sqlcmd -Q "SELECT TOP 5 x FROM y"'`) {
+		t.Errorf("double quotes must pass through unescaped:\n%s", script)
+	}
+	if strings.Contains(script, `\"`) {
+		t.Errorf("script must not contain backslash-escaped quotes:\n%s", script)
+	}
+}
+
+func TestPsQuote(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`plain`, `'plain'`},
+		{`has "double" quotes`, `'has "double" quotes'`},
+		{`it's`, `'it''s'`},
+		{``, `''`},
+	}
+	for _, c := range cases {
+		if got := psQuote(c.in); got != c.want {
+			t.Errorf("psQuote(%q) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
+// No args must not emit an empty -ArgumentList: Start-Process rejects it.
+func TestWinuiScriptLaunchNoArgs(t *testing.T) {
+	script, err := winuiScript(GUIAction{Kind: "launch", Text: "calc.exe"})
+	if err != nil {
+		t.Fatalf("winuiScript launch: %v", err)
+	}
+	if strings.Contains(script, "-ArgumentList") {
+		t.Errorf("no-arg launch must omit -ArgumentList:\n%s", script)
+	}
+}
+
+func TestWinuiScriptLaunchRequiresTarget(t *testing.T) {
+	if _, err := winuiScript(GUIAction{Kind: "launch"}); err == nil {
+		t.Fatal("launch without path or text should error")
+	}
+}
+
+func TestSplitCommandLine(t *testing.T) {
+	cases := []struct{ in, exe, args string }{
+		{`notepad.exe`, `notepad.exe`, ``},
+		{`notepad.exe C:/a.txt`, `notepad.exe`, `C:/a.txt`},
+		{`  cmd.exe   /k dir  `, `cmd.exe`, `/k dir`},
+		{`"C:\Program Files\App\a.exe" -v`, `C:\Program Files\App\a.exe`, `-v`},
+		{`"C:\Program Files\App\a.exe"`, `C:\Program Files\App\a.exe`, ``},
+		{``, ``, ``},
+	}
+	for _, c := range cases {
+		exe, args := splitCommandLine(c.in)
+		if exe != c.exe || args != c.args {
+			t.Errorf("splitCommandLine(%q) = (%q, %q), want (%q, %q)", c.in, exe, args, c.exe, c.args)
+		}
+	}
+}
+
 // TestWinuiScriptTreeFlatDump guards that tree roots at the foreground window
 // and enumerates named descendants (a depth-limited walker misses deep
 // WebView2 content).

@@ -84,10 +84,10 @@ func newGUICmd() *cobra.Command {
 			return tr.GUI(cmd.Context(), t, a, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
-	c.Flags().StringVar(&kind, "kind", "", "action kind: click | click-text | click-at | type | hotkey | screenshot | observe | tree | wait | run")
+	c.Flags().StringVar(&kind, "kind", "", "action kind: click | click-text | click-at | type | hotkey | screenshot | observe | tree | wait | run | launch | open-url")
 	c.Flags().StringVar(&selector, "selector", "", "AX selector or descriptor (or hotkey chord as fallback)")
-	c.Flags().StringVar(&text, "text", "", "text to type, click-text target, or hotkey chord")
-	c.Flags().StringVar(&path, "path", "", "screenshot output path or flow path")
+	c.Flags().StringVar(&text, "text", "", "text to type, click-text target, hotkey chord, or launch command line")
+	c.Flags().StringVar(&path, "path", "", "screenshot output path, flow path, open-url target, or launch executable")
 	c.Flags().IntVar(&x, "x", 0, "x coord for click-at")
 	c.Flags().IntVar(&y, "y", 0, "y coord for click-at")
 	c.Flags().IntVar(&ms, "ms", 0, "milliseconds for wait")

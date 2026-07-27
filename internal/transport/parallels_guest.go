@@ -797,8 +797,65 @@ foreach ($e in $all) {
 			return "", fmt.Errorf("parallels-guest gui open-url requires path or text")
 		}
 		return prelude + fmt.Sprintf(`Start-Process %q`, url), nil
+	case "launch":
+		// Start a program ON THE DESKTOP. `vmlab run` uses prlctl exec, which
+		// lands in Session 0 as SYSTEM: anything it starts has no window handle
+		// and is invisible to Screenshot. Routed through the interactive GUI
+		// path (guiSession: interactive) this lands in the logged-in user's
+		// session, so the window is real and screenshottable.
+		//
+		// --path is the executable and --text its arguments; when --path is
+		// empty the whole of --text is parsed as one command line.
+		exe, args := a.Path, a.Text
+		if exe == "" {
+			exe, args = splitCommandLine(a.Text)
+		}
+		if exe == "" {
+			return "", fmt.Errorf("parallels-guest gui launch requires path (executable) or text (command line)")
+		}
+		// PowerShell single-quoted literals, NOT Go %q: %q escapes with
+		// backslashes, which PowerShell does not treat as an escape (its escape
+		// char is a backtick). A command line containing double quotes — the
+		// normal case, e.g. `sqlcmd -Q "SELECT ..."` — would otherwise reach the
+		// guest with stray backslashes and fail to parse.
+		start := fmt.Sprintf(`$p = Start-Process -FilePath %s -PassThru`, psQuote(exe))
+		if args != "" {
+			start = fmt.Sprintf(`$p = Start-Process -FilePath %s -ArgumentList %s -PassThru`, psQuote(exe), psQuote(args))
+		}
+		// Emit the pid so callers can poll or stop it later.
+		return prelude + start + "\n" + `Write-Output ("pid=" + $p.Id)`, nil
 	}
 	return "", fmt.Errorf("parallels-guest: unsupported gui kind %q", a.Kind)
+}
+
+// psQuote wraps s as a PowerShell single-quoted literal, doubling any embedded
+// single quote. Inside '...' PowerShell performs no escape or variable
+// expansion, so this is safe for arbitrary payloads — including the double
+// quotes that Go's %q would mangle.
+func psQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// splitCommandLine splits a single command line into the executable and the
+// remaining argument string, honouring double quotes around a path that
+// contains spaces (`"C:\Program Files\x\y.exe" -flag`). Only the executable
+// needs unquoting — the argument remainder is handed to Start-Process
+// -ArgumentList as-is, which re-parses it itself.
+func splitCommandLine(cmdLine string) (exe string, args string) {
+	s := strings.TrimSpace(cmdLine)
+	if s == "" {
+		return "", ""
+	}
+	if s[0] == '"' {
+		if end := strings.Index(s[1:], `"`); end >= 0 {
+			return s[1 : end+1], strings.TrimSpace(s[end+2:])
+		}
+		return strings.Trim(s, `"`), ""
+	}
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i], strings.TrimSpace(s[i+1:])
+	}
+	return s, ""
 }
 
 // chordToSendKeys maps the cross-platform chord syntax (cmd+shift+t,
