@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -34,6 +36,9 @@ func runExternalEnv(ctx context.Context, name string, args []string, env []strin
 	if stderr == nil {
 		stderr = io.Discard
 	}
+	if needsWindowsFileOutput(runtime.GOOS, name) {
+		return runExternalFileOutput(ctx, name, args, env, stdout, stderr)
+	}
 	start := time.Now()
 	c := exec.CommandContext(ctx, name, args...)
 	if len(env) > 0 {
@@ -58,6 +63,94 @@ func runExternalEnv(ctx context.Context, name string, args []string, env []strin
 		return res, fmt.Errorf("%s: not found on PATH (install it or expose via PATH)", name)
 	}
 	return res, err
+}
+
+// Windows OpenSSH can keep ssh.exe/scp.exe alive indefinitely when Go connects
+// stdout or stderr through anonymous pipes. Give those processes real files,
+// then replay the output after exit. Other platforms and binaries retain live
+// streaming through the normal exec.Cmd path.
+func runExternalFileOutput(ctx context.Context, name string, args, env []string, stdout, stderr io.Writer) (Result, error) {
+	stdoutFile, err := os.CreateTemp("", "vmlab-exec-stdout-*")
+	if err != nil {
+		return Result{}, fmt.Errorf("%s: create stdout file: %w", name, err)
+	}
+	stdoutPath := stdoutFile.Name()
+	defer os.Remove(stdoutPath)
+
+	stderrFile, err := os.CreateTemp("", "vmlab-exec-stderr-*")
+	if err != nil {
+		_ = stdoutFile.Close()
+		return Result{}, fmt.Errorf("%s: create stderr file: %w", name, err)
+	}
+	stderrPath := stderrFile.Name()
+	defer os.Remove(stderrPath)
+
+	start := time.Now()
+	c := exec.CommandContext(ctx, name, args...)
+	if len(env) > 0 {
+		c.Env = append(os.Environ(), env...)
+	}
+	c.Stdout = stdoutFile
+	c.Stderr = stderrFile
+	runErr := c.Run()
+	res := Result{Duration: time.Since(start).Milliseconds()}
+
+	_ = stdoutFile.Close()
+	_ = stderrFile.Close()
+	replayErr := replayExternalOutput(stdoutPath, stdout, stderrPath, stderr)
+
+	if runErr == nil {
+		return res, replayErr
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return res, fmt.Errorf("%s: %w after %dms", name, ctxErr, res.Duration)
+	}
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) {
+		res.ExitCode = ee.ExitCode()
+		return res, replayErr
+	}
+	if errors.Is(runErr, exec.ErrNotFound) {
+		return res, fmt.Errorf("%s: not found on PATH (install it or expose via PATH)", name)
+	}
+	return res, runErr
+}
+
+func replayExternalOutput(stdoutPath string, stdout io.Writer, stderrPath string, stderr io.Writer) error {
+	for _, item := range []struct {
+		path   string
+		writer io.Writer
+	}{
+		{path: stdoutPath, writer: stdout},
+		{path: stderrPath, writer: stderr},
+	} {
+		file, err := os.Open(item.path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(item.writer, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func needsWindowsFileOutput(goos, name string) bool {
+	if goos != "windows" {
+		return false
+	}
+	base := filepath.Base(strings.ReplaceAll(name, `\`, "/"))
+	switch strings.ToLower(base) {
+	case "ssh", "ssh.exe", "scp", "scp.exe":
+		return true
+	default:
+		return false
+	}
 }
 
 // runExternalStdin is the runExternal variant that wires a Reader into the

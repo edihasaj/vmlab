@@ -40,6 +40,11 @@ transports. The master exits on its own `controlPersist` after the last channel
 closes. To disable for a target, set `multiplex: false`. To drop a warm master
 manually: `ssh -o ControlPath=~/.vmlab/cm/%C -O exit <user>@<host>`.
 
+On a Windows vmlab host, OpenSSH output is staged through temporary files and
+replayed after the command exits. Windows `ssh.exe` can remain alive
+indefinitely when Go connects its output to anonymous pipes. macOS and Linux
+retain live streaming. The temporary files are removed after every invocation.
+
 ## Capabilities
 
 | Capability | Supported |
