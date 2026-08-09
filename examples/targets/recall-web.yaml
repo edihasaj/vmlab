@@ -9,5 +9,5 @@ abx:
   # Point at any web URL. Default is recall's marketing site; swap to
   # http://localhost:<port> after `recall webui start` to screenshot the
   # local dashboard, or set abx.mode=live to drive a dedicated Chrome
-  # profile after `~/Projects/agent-scripts/browser/scripts/chrome-agent start`.
+  # profile after `~/Projects/agent/browser/scripts/chrome-agent start`.
   url: https://recallmemory.dev/
