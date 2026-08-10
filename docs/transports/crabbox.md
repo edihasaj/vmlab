@@ -59,6 +59,27 @@ crabbox has no standalone `sync` command — `run` rsyncs the working checkout t
 the box on every call. `vmlab sync <crabbox-target>` therefore runs a no-op
 remote command (`crabbox run … -- true`) purely to push the current diff.
 
+## Lifecycle provider
+
+Static `transport: crabbox` targets drive leases that already exist. To have
+vmlab create and release the sandbox too, declare an instance:
+
+```yaml
+name: linux-sandbox
+provider: crabbox
+crabbox:
+  target: linux
+  ttl: 30m
+disposition:
+  on_success: destroy
+  on_failure: destroy
+```
+
+Linux defaults to Crabbox `local-container`, with Docker or Podman selected by
+Crabbox on the current host. Set `crabbox.provider` for another backend. See
+[`docs/providers.md`](../providers.md#crabbox-sandboxes) for lifecycle and
+machine-selection details.
+
 ## Provider passthrough
 
 vmlab exposes selected crabbox subcommands as `vmlab crabbox <sub> [args...]`
@@ -97,5 +118,5 @@ on crabbox-brokered leases. Pick by who owns the lease.
 
 ## Notes
 
-- vmlab never owns crabbox credentials — it forwards to the crabbox CLI.
+- vmlab never owns crabbox credentials. It forwards to the crabbox CLI.
 - Use `vmlab shell <name>` for interactive sessions; it execs into `crabbox ssh`.

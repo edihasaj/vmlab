@@ -15,6 +15,7 @@ Instance (YAML)  ──▶  Provider.Up()  ──▶  Target  ──▶  Transpo
 | Provider | Backend | Default transport | Default `dispose.on_success` | Snapshots | Status |
 |---|---|---|---|---|---|
 | `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | `suspend` | ✓ native | live-smoked |
+| `crabbox` | Crabbox lease lifecycle | `crabbox` | release on any non-keep disposition | via `vmlab crabbox checkpoint` | local-container live-smoked |
 | `hetzner` | `hcloud` CLI | `ssh` | `destroy` | ✓ image-based | code + tests; `vmlab provider validate hetzner` dry-runs the token |
 | `aws` | `aws` CLI | `ssh` | `destroy` | ✓ EC2 AMI + EBS | tagged `vmlab-image=<name>`; deregister + delete-snapshot in cleanup |
 | `azure` | `az` CLI | `ssh` | `destroy` | ✓ disk-snapshot (default) / managed-image (opt-in) | `azure.snapshotMode: image` for managed-image path |
@@ -100,6 +101,43 @@ ssh:
   user: parallels
   identity: ~/.ssh/vmlab_parallels_ubuntu
 ```
+
+### Crabbox sandboxes
+
+Use `provider: crabbox` when vmlab should own the complete lease lifecycle.
+`up` warms the lease and emits a `transport: crabbox` target, and `down`
+releases it. Lease identity is persisted under `~/.vmlab/state/crabbox/`, so a
+later process stops the exact sandbox it created.
+
+```yaml
+name: linux-sandbox
+provider: crabbox
+tags: [linux, sandbox]
+crabbox:
+  target: linux
+  ttl: 30m
+  idleTimeout: 10m
+  localContainer:
+    cpus: 2
+    memory: 4g
+disposition:
+  on_success: destroy
+  on_failure: destroy
+  only_if_we_started: true
+```
+
+Linux uses Crabbox `local-container` by default. Crabbox chooses Docker or
+Podman for the current machine. The host Docker socket stays disabled unless
+`crabbox.localContainer.dockerSocket: true` is explicitly set. macOS and
+Windows guests require an explicit `crabbox.provider`, because safe choices
+depend on available templates and credentials. Examples include `parallels`
+or `tart` for macOS, and `parallels`, `hyperv`, or `windows-sandbox` for
+Windows.
+
+An explicit `crabbox.id` adopts an existing lease. A missing ID does not get
+reused as a caller-selected lease ID, since not every Crabbox backend supports
+idempotent caller IDs. New leases use `crabbox.slug`, falling back to the
+vmlab instance name.
 
 ### Doctor recovery hints
 

@@ -99,6 +99,23 @@ provider: nope
 	}
 }
 
+func TestCrabboxInstanceValid(t *testing.T) {
+	body := []byte(`name: linux-sandbox
+provider: crabbox
+tags: [linux, sandbox]
+crabbox:
+  provider: local-container
+  target: linux
+  ttl: 30m
+  localContainer:
+    cpus: 2
+    memory: 4g
+`)
+	if err := ValidateInstance("crabbox.yaml", body); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
 func TestInstanceMissingProvider(t *testing.T) {
 	if err := ValidateInstance("x.yaml", []byte(`name: x`)); err == nil {
 		t.Fatal("expected error: provider required")

@@ -7,6 +7,7 @@ import (
 	"github.com/edihasaj/vmlab/internal/provider"
 	"github.com/edihasaj/vmlab/internal/provider/aws"
 	"github.com/edihasaj/vmlab/internal/provider/azure"
+	"github.com/edihasaj/vmlab/internal/provider/crabbox"
 	"github.com/edihasaj/vmlab/internal/provider/gcp"
 	"github.com/edihasaj/vmlab/internal/provider/hetzner"
 	"github.com/edihasaj/vmlab/internal/provider/parallels"
@@ -18,6 +19,7 @@ func init() {
 	provider.SideEffectRegister(parallels.New())
 	provider.SideEffectRegister(hetzner.New())
 	provider.SideEffectRegister(azure.New())
+	provider.SideEffectRegister(crabbox.New())
 	provider.SideEffectRegister(aws.New())
 	provider.SideEffectRegister(gcp.New())
 	provider.SideEffectRegister(tart.New())

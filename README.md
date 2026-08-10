@@ -202,6 +202,7 @@ vmlab down gpu-burst --dispose=destroy    # scale down: keep|suspend|poweroff|de
 | Provider | Backend | Default transport | Scale-down default |
 |---|---|---|---|
 | `parallels` | `prlctl` (local or over SSH) | `parallels-guest` | suspend |
+| `crabbox` | Crabbox lease, Linux defaults to Docker/Podman `local-container` | `crabbox` | release |
 | `hetzner` | `hcloud` | `ssh` | destroy |
 | `aws` | `aws` CLI | `ssh` | destroy |
 | `azure` | `az` CLI | `ssh` | destroy |

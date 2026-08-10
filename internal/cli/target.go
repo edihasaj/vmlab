@@ -64,7 +64,7 @@ func targetAddCmd() *cobra.Command {
 		Use:   "add",
 		Short: "Add a target (writes ~/.vmlab/targets/<name>.yaml)",
 		Example: `  vmlab target add --name ubuntu-local --transport crabbox --tags linux,vm \
-      --set crabbox.configPath=~/.crabbox/ubuntu-local.yaml`,
+      --set crabbox.id=ubuntu-local --set crabbox.provider=local-container`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if name == "" || transport == "" {
 				return fmt.Errorf("--name and --transport are required")

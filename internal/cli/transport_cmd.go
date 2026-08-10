@@ -189,8 +189,8 @@ var transportSettingsDoc = map[string]map[string]string{
 		"guiport.strict": "fail without screen-recording fallback",
 	},
 	"crabbox": {
-		"crabbox.configPath": "path to crabbox config",
-		"crabbox.name":       "named profile in crabbox",
-		"crabbox.provider":   "aws | azure | gcp | hetzner | parallels | proxmox | ssh — set when warming via `vmlab crabbox warmup`",
+		"crabbox.id":       "lease ID or friendly slug",
+		"crabbox.slug":     "friendly slug, alias for id",
+		"crabbox.provider": "Crabbox backend, for example local-container, parallels, aws, azure, or ssh",
 	},
 }

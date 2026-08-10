@@ -102,6 +102,7 @@ func scaffolds(cwd, flowBody string) []scaffoldFile {
 		{".vmlab/instances/example.hetzner.yaml", instanceExampleHetzner},
 		{".vmlab/instances/example.aws.yaml", instanceExampleAWS},
 		{".vmlab/instances/example.tart.yaml", instanceExampleTart},
+		{".vmlab/instances/example.crabbox.yaml", instanceExampleCrabbox},
 	}
 }
 
@@ -222,7 +223,7 @@ Discover:
 
 ` + "```sh" + `
 vmlab transport ls            # every transport (ssh, ssh-windows, adb, idb, parallels-guest, …)
-vmlab provider ls             # every VM provider (parallels, hetzner, aws, azure, gcp, tart)
+vmlab provider ls             # every VM provider (parallels, crabbox, hetzner, aws, azure, gcp, tart)
 vmlab schema target           # JSON schema for target YAML
 vmlab schema flow             # JSON schema for flow YAML
 vmlab schema instance         # JSON schema for instance YAML
@@ -423,7 +424,7 @@ simctl:
   udid: "AAA-BBB-CCC"   # xcrun simctl list devices
 `
 
-const targetExampleCrabbox = `# crabbox is an external SSH manager — delegate auth/host bookkeeping to it.
+const targetExampleCrabbox = `# Drive an existing Crabbox lease. Use a provider: crabbox instance to create one.
 name: ubuntu-local
 transport: crabbox
 tags: [linux, vm]
@@ -431,8 +432,8 @@ capabilities:
   shell: true
   sync: true
 crabbox:
-  configPath: ~/.crabbox/ubuntu-local.yaml
-  # name: ubuntu-local   # alternative to configPath
+  id: ubuntu-local       # lease ID or friendly slug
+  provider: local-container
 `
 
 // ---------- instance examples, one per provider ----------
@@ -500,4 +501,25 @@ tart:
   memory: 8G
 disposition:
   on_success: poweroff
+`
+
+const instanceExampleCrabbox = `# Ephemeral sandbox owned by Crabbox and driven end to end by vmlab.
+# Linux defaults to local-container, which auto-detects Docker or Podman.
+name: linux-sandbox
+provider: crabbox
+tags: [linux, sandbox]
+crabbox:
+  target: linux
+  slug: linux-sandbox
+  ttl: 30m
+  idleTimeout: 10m
+  localContainer:
+    cpus: 2
+    memory: 4g
+    # image: ubuntu:26.04
+    # dockerSocket: false  # opt-in only, grants control of the host engine
+disposition:
+  on_success: destroy
+  on_failure: destroy
+  only_if_we_started: true
 `

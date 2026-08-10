@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- First-class `crabbox` lifecycle provider. `vmlab up` warms a lease, emits a
+  Crabbox transport target, persists its identity, and `vmlab down` releases
+  it. Linux defaults to Crabbox `local-container`, with Docker or Podman
+  selected per host. macOS and Windows guests require an explicit backend.
+- Crabbox local-container settings for CPU, memory, image, user, work root,
+  network, volumes, and explicit Docker socket opt-in.
 - `vmlab gui <parallels-guest-target> --kind launch` starts a program **on the
   desktop**. `vmlab run` cannot: `prlctl exec` is Session 0 (SYSTEM), so a
   window it starts has no window handle and never appears in `screenshot`.
