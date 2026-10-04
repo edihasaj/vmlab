@@ -15,7 +15,7 @@ import (
 //
 //	notify:
 //	  discord:
-//	    webhook: op://Personal/vmlab-discord-runs/credential
+//	    webhook: op://Infrastructure/vmlab-discord-runs/credential
 //	    on: [start, success, failure]
 //	    mention_on_failure: "<@123456789>"
 //	    username: vmlab
