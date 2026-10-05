@@ -1,8 +1,7 @@
 # runbook: first run on a fresh Mac
 
 ```sh
-brew tap edihasaj/tap
-brew install vmlab
+brew install edihasaj/tap/vmlab   # the full name also trusts the tap formula (Homebrew 7+)
 
 vmlab init
 vmlab target add --name dev-mac --transport local --tags local,mac
