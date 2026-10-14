@@ -1,19 +1,50 @@
 name: release
 
 on:
-  push:
-    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Explicitly publish the selected production tag
+        type: boolean
+        default: false
+      tag:
+        description: Existing vX.Y.Z tag at the exact production commit
+        type: string
+        default: ""
 
 permissions:
   contents: write
 
 jobs:
-  goreleaser:
-    runs-on: macos-latest
+  validate-production:
+    permissions:
+      contents: read
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/production' && inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      sha: ${{ steps.validate.outputs.sha }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - id: validate
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: bash scripts/validate-production-release.sh
+
+  goreleaser:
+    needs: validate-production
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/production' && inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.validate-production.outputs.sha }}
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -24,5 +55,6 @@ jobs:
           version: '~> v2'
           args: release --clean
         env:
+          GORELEASER_CURRENT_TAG: ${{ needs.validate-production.outputs.tag }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

@@ -1,5 +1,7 @@
 # vmlab
 
+For paused native builds and explicit production requests, see [CI cost policy](docs/ci-cost-policy.md).
+
 **One CLI for agents to install, set up, test, and verify software across any reachable target.**
 
 vmlab is a transport-agnostic orchestrator for cross-platform verify loops. It
